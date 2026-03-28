@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "241298033880",
+    "project_id": "cso-mobile-ac4d2",
+    "storage_bucket": "cso-mobile-ac4d2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:241298033880:android:601e3ab13119e34ef2dbad",
+        "android_client_info": {
+          "package_name": "com.PFA.cso_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCEFZ-1yhsnOZ35WW68Az-hub6Lu-f6qOY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

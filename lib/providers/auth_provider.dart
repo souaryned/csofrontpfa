@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cso_mobile/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
@@ -15,23 +16,27 @@ class AuthProvider extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get isLoggedIn => _user != null;
 
-  Future<bool> login(String email, String password) async {
-    _isLoading = true;
-    _errorMessage = null;
+ Future<bool> login(String email, String password) async {
+  _isLoading = true;
+  _errorMessage = null;
+  notifyListeners();
+
+  try {
+    _user = await _authService.login(email, password);
+    _isLoading = false;
     notifyListeners();
 
-    try {
-      _user = await _authService.login(email, password);
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _errorMessage = e.toString();
-      _isLoading = false;
-      notifyListeners();
-      return false;
-    }
+    // ✅ Envoyer le token FCM après login
+    await NotificationService.refreshAndSaveToken();
+
+    return true;
+  } catch (e) {
+    _errorMessage = e.toString();
+    _isLoading = false;
+    notifyListeners();
+    return false;
   }
+}
 
   Future<void> loadUser() async {
     _user = await _authService.getMe();

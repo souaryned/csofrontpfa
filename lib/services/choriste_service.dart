@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/api_config.dart';
 
@@ -61,6 +62,17 @@ Future<void> declareLeave(String userId, String startDate, String endDate, Strin
     options: await _authHeaders(),
   );
   return response.data;
+}
+Future<void> saveFcmToken(String token) async {
+  try {
+    await _dio.patch(
+      '/auth/fcm-token',
+      data: {'fcmToken': token},
+      options: await _authHeaders(),
+    );
+  } catch (e) {
+    debugPrint('[FCM] Erreur save token: $e');
+  }
 }
 
 

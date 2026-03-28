@@ -39,6 +39,9 @@ dependencies:
   provider: ^6.1.0
   image_picker: ^1.0.4
   cached_network_image: ^3.3.1
+  firebase_core: ^3.0.0
+  firebase_messaging: ^15.0.0
+  flutter_local_notifications: ^17.0.0
 
 
 dev_dependencies:
