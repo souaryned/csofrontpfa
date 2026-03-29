@@ -23,8 +23,29 @@ class _ProgrammeScreenState extends State<ProgrammeScreen> {
   Future<void> _loadData() async {
     try {
       final concerts = await _service.getConcerts();
+      final now = DateTime.now();
+
+      // Séparer à venir et passés
+      final upcoming = concerts.where((c) {
+        try { return DateTime.parse(c['dateHeure']).isAfter(now); } catch (_) { return false; }
+      }).toList()
+        ..sort((a, b) {
+          final da = DateTime.tryParse(a['dateHeure'] ?? '') ?? DateTime(2099);
+          final db = DateTime.tryParse(b['dateHeure'] ?? '') ?? DateTime(2099);
+          return da.compareTo(db); // plus proche en premier
+        });
+
+      final past = concerts.where((c) {
+        try { return !DateTime.parse(c['dateHeure']).isAfter(now); } catch (_) { return true; }
+      }).toList()
+        ..sort((a, b) {
+          final da = DateTime.tryParse(a['dateHeure'] ?? '') ?? DateTime(0);
+          final db = DateTime.tryParse(b['dateHeure'] ?? '') ?? DateTime(0);
+          return db.compareTo(da); // plus récent en premier
+        });
+
       setState(() {
-        _concerts = concerts;
+        _concerts = [...upcoming, ...past];
         _isLoading = false;
       });
     } catch (e) {
@@ -61,11 +82,21 @@ class _ProgrammeScreenState extends State<ProgrammeScreen> {
   }
 
   String _buildPosterUrl(String? poster) {
-    if (poster == null || poster.isEmpty) return '';
+    if (poster == null || poster.trim().isEmpty) return '';
+    // Si c'est déjà une URL complète
+    if (poster.startsWith('http://') || poster.startsWith('https://')) {
+      return poster;
+    }
+    // Si c'est un chemin relatif commençant par /uploads
     if (poster.startsWith('/uploads')) {
       return '${ApiConfig.baseUrl}$poster';
     }
-    return '${ApiConfig.baseUrl}/uploads/posters/$poster';
+    // Si c'est juste un nom de fichier
+    if (poster.contains('.')) {
+      return '${ApiConfig.baseUrl}/uploads/posters/$poster';
+    }
+    // Champ présent mais invalide → pas d'image
+    return '';
   }
 
   @override
@@ -125,7 +156,7 @@ class _ProgrammeScreenState extends State<ProgrammeScreen> {
                         errorBuilder: (_, __, ___) => _buildPosterPlaceholder(),
                         loadingBuilder: (context, child, loadingProgress) {
                           if (loadingProgress == null) return child;
-                          return _buildPosterPlaceholder();
+                          return _buildPosterLoading();
                         },
                       )
                     : _buildPosterPlaceholder(),
@@ -210,6 +241,26 @@ class _ProgrammeScreenState extends State<ProgrammeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPosterLoading() {
+    return Container(
+      width: double.infinity,
+      height: 200,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF2DD4BF),
+          strokeWidth: 2,
+        ),
       ),
     );
   }

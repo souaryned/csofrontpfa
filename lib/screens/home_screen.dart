@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import 'login_screen.dart';
 import '../config/api_config.dart';
 import '../widgets/avatar_widget.dart';
 import 'choriste/dashboard_screen.dart';
@@ -62,17 +63,7 @@ _NavItem(icon: Icons.event_available_rounded, label: 'Déclarer un congé'),    
         ),
         // ✅ AppBar : titre vide — le CSO est seulement dans le dashboard
         title: const SizedBox.shrink(),
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 12),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(Icons.notifications_none_rounded, color: Color(0xFF1E293B), size: 20),
-          ),
-        ],
+        actions: const [],
       ),
       drawer: _buildDrawer(context, auth, user),
       body: _screens[_currentIndex],
@@ -140,6 +131,48 @@ _NavItem(icon: Icons.event_available_rounded, label: 'Déclarer un congé'),    
                               Text('Actif', style: TextStyle(color: const Color(0xFF22C55E).withValues(alpha: 0.9), fontSize: 11, fontWeight: FontWeight.w500)),
                             ],
                           ),
+                          // ── Pupitre + Chef de pupitre ──
+                          if ((user?.pupitreLabel as String? ?? '').isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.music_note_rounded,
+                                  size: 13,
+                                  color: Color(user?.pupitreColor as int? ?? 0xFF6B7280),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  user?.pupitreLabel as String? ?? '',
+                                  style: TextStyle(
+                                    color: Color(user?.pupitreColor as int? ?? 0xFF6B7280),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (user?.isChefDePupitre == true) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.star_rounded, size: 10, color: Color(0xFFD97706)),
+                                        SizedBox(width: 3),
+                                        Text('Chef de pupitre',
+                                            style: TextStyle(color: Color(0xFFD97706), fontSize: 9, fontWeight: FontWeight.w600)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -229,7 +262,64 @@ _NavItem(icon: Icons.event_available_rounded, label: 'Déclarer un congé'),    
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               onTap: () async {
                 Navigator.pop(context);
-                await auth.logout();
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    backgroundColor: Colors.white,
+                    title: const Row(
+                      children: [
+                        Icon(Icons.logout_rounded, color: Color(0xFFEF4444), size: 22),
+                        SizedBox(width: 10),
+                        Text(
+                          'Déconnexion',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1E293B),
+                          ),
+                        ),
+                      ],
+                    ),
+                    content: const Text(
+                      'Voulez-vous vraiment vous déconnecter ?',
+                      style: TextStyle(color: Color(0xFF64748B), fontSize: 14),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text(
+                          'Annuler',
+                          style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEF4444),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                        ),
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Déconnecter', style: TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await auth.logout();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (route) => false,
+                    );
+                  }
+                }
               },
             ),
           ),

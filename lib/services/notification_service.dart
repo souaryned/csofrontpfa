@@ -95,6 +95,13 @@ class NotificationService {
 
     switch (type) {
       case 'new_repetition':
+      case 'repetition_updated':
+      case 'repetition_cancelled':
+      case 'repetition_reminder_2h':
+      case 'repetition_reminder_10min':
+      case 'reminder_day_before':
+      case 'reminder_2h':
+      case 'reminder_10min':
         navigator.pushNamed('/repetitions');
         break;
       case 'new_concert':
