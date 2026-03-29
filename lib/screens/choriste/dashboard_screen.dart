@@ -1,9 +1,9 @@
+import 'package:cso_mobile/screens/choriste/presences_screen.dart';
+import 'package:cso_mobile/screens/choriste/programme_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
-import 'presences_screen.dart';
-import 'programme_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -66,21 +66,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Répétitions à venir cette semaine
+  // 4 répétitions autour d'aujourd'hui : passées récentes + à venir
   List<dynamic> get _weekRepetitions {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final weekEnd = _endOfWeek(now);
-    return _allRepetitions.where((r) {
+
+    // Helper : est-ce que cette rep est terminée (passée ou aujourd'hui après endTime) ?
+    bool isFinished(dynamic r) {
       final d = _parseDate(r['date']);
       if (d == null) return false;
       final day = DateTime(d.year, d.month, d.day);
-      return !day.isBefore(today) && !day.isAfter(weekEnd);
-    }).toList()
+      if (day.isBefore(today)) return true;
+      if (_isSameDay(day, today)) {
+        final endTime = r['endTime'] as String?;
+        if (endTime != null) {
+          final parts = endTime.split(':').map(int.parse).toList();
+          final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
+          return now.isAfter(end);
+        }
+      }
+      return false;
+    }
+
+    // Passées : les 2 dernières terminées
+    final past = _allRepetitions.where(isFinished).toList()
+      ..sort((a, b) {
+        final da = _parseDate(a['date']) ?? DateTime(0);
+        final db = _parseDate(b['date']) ?? DateTime(0);
+        return db.compareTo(da); // plus récent d'abord
+      });
+
+    // À venir : les 2 prochaines non terminées
+    final upcoming = _allRepetitions.where((r) => !isFinished(r)).toList()
       ..sort((a, b) {
         final da = _parseDate(a['date']) ?? DateTime(2099);
         final db = _parseDate(b['date']) ?? DateTime(2099);
-        return da.compareTo(db);
+        return da.compareTo(db); // plus proche d'abord
       });
+
+    // Combiner : À venir en haut, passées en bas
+    final combined = [
+      ...upcoming.take(2),
+      ...past.take(2).toList(),
+    ];
+    return combined;
   }
 
   // Prochains concerts
@@ -163,7 +192,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
 
                   // ── Répétitions cette semaine ──
-                  _buildSectionTitle('Répétitions cette semaine',
+                  _buildSectionTitle('Répétitions',
                       Icons.event_note_rounded, const Color(0xFF2DD4BF)),
                   const SizedBox(height: 12),
                   _buildWeekRepetitions(weekReps, userId),
@@ -462,8 +491,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-    ),  // end GestureDetector child Container
-    );  // end GestureDetector
+    ), // end Container
+    ); // end GestureDetector
   }
 
   // ── Section title ──
@@ -497,27 +526,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: reps.map((rep) {
         final status = _repStatus(rep, userId);
         final d = _parseDate(rep['date']);
-        final isToday = d != null && _isSameDay(d, DateTime.now());
+        final now = DateTime.now();
+        final isToday = d != null && _isSameDay(d, now);
 
-        Color accentColor;
-        String statusLabel;
-        Color statusBg;
-        switch (status) {
-          case 'present':
-            accentColor = const Color(0xFF22C55E);
-            statusLabel = '✓ Présent';
-            statusBg = const Color(0xFFDCFCE7);
-            break;
-          case 'absent':
-            accentColor = const Color(0xFFEF4444);
-            statusLabel = '✗ Absent';
-            statusBg = const Color(0xFFFEE2E2);
-            break;
-          default:
-            accentColor = const Color(0xFFF59E0B);
-            statusLabel = 'En attente';
-            statusBg = const Color(0xFFFFFBEB);
+        // Passée = jour antérieur OU (aujourd'hui ET heure de fin dépassée)
+        bool isPast = d != null && !isToday && d.isBefore(now);
+        if (!isPast && isToday && d != null) {
+          final endTime = rep['endTime'] as String?;
+          if (endTime != null) {
+            final parts = endTime.split(':').map(int.parse).toList();
+            final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
+            if (now.isAfter(end)) isPast = true;
+          }
         }
+
+        // Dashboard : passée = "Passée" gris (détail présent/absent dans page Présences)
+        final Color accentColor = isPast ? const Color(0xFF9CA3AF) : const Color(0xFFF59E0B);
+        final String statusLabel = isPast ? 'Passée' : 'À venir';
+        final Color statusBg = isPast ? const Color(0xFFF1F5F9) : const Color(0xFFFFFBEB);
 
         return GestureDetector(
           onTap: () => Navigator.push(
@@ -535,7 +561,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   surfaceTintColor: Colors.white,
                   iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
                 ),
-                body: const PresencesScreen(),
+                body: PresencesScreen(initialTab: isPast ? 1 : 0),
               ),
             ),
           ),
@@ -543,12 +569,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isPast ? const Color(0xFFFAFAFA) : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: isToday
                 ? Border.all(color: const Color(0xFF2DD4BF).withValues(alpha: 0.4), width: 1.5)
-                : null,
-            boxShadow: [
+                : isPast ? Border.all(color: const Color(0xFFE5E7EB)) : null,
+            boxShadow: isPast ? [] : [
               BoxShadow(
                   color: Colors.black.withValues(alpha: 0.04),
                   blurRadius: 8,
@@ -607,28 +633,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ],
                     const SizedBox(height: 5),
                     Wrap(
-  spacing: 10,
-  runSpacing: 2,
-  crossAxisAlignment: WrapCrossAlignment.center,
-  children: [
-    Row(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.calendar_today_rounded,
-          size: 11, color: Color(0xFF94A3B8)),
-      const SizedBox(width: 4),
-      Text(_formatDate(rep['date']),
-          style: const TextStyle(
-              color: Color(0xFF64748B), fontSize: 11)),
-    ]),
-    Row(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.access_time_rounded,
-          size: 11, color: Color(0xFF94A3B8)),
-      const SizedBox(width: 4),
-      Text('${rep['startTime']} – ${rep['endTime']}',
-          style: const TextStyle(
-              color: Color(0xFF64748B), fontSize: 11)),
-    ]),
-  ],
-),
+                      spacing: 8,
+                      runSpacing: 3,
+                      children: [
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.calendar_today_rounded,
+                              size: 11, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 4),
+                          Text(_formatDate(rep['date']),
+                              style: const TextStyle(
+                                  color: Color(0xFF64748B), fontSize: 11)),
+                        ]),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.access_time_rounded,
+                              size: 11, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 4),
+                          Text('${rep['startTime']} – ${rep['endTime']}',
+                              style: const TextStyle(
+                                  color: Color(0xFF64748B), fontSize: 11)),
+                        ]),
+                      ],
+                    ),
                     if (rep['location'] != null) ...[
                       const SizedBox(height: 3),
                       Row(children: [
@@ -659,10 +684,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         fontWeight: FontWeight.w600)),
               ),
               const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFCBD5E1)),
+              const Icon(Icons.chevron_right_rounded,
+                  size: 16, color: Color(0xFFCBD5E1)),
             ],
           ),
-        ),
+        ), // end Container
         ); // end GestureDetector
       }).toList(),
     );

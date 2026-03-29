@@ -5,7 +5,8 @@ import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
 
 class PresencesScreen extends StatefulWidget {
-  const PresencesScreen({super.key});
+  final int initialTab;
+  const PresencesScreen({super.key, this.initialTab = 0});
 
   @override
   State<PresencesScreen> createState() => _PresencesScreenState();
@@ -23,15 +24,38 @@ class _PresencesScreenState extends State<PresencesScreen>
   Map<String, String?> _statusMap = {};
 
   // ── Repetition split ──
+
+  DateTime _startOfWeek(DateTime d) =>
+      DateTime(d.year, d.month, d.day - (d.weekday - 1));
+  DateTime _endOfWeek(DateTime d) =>
+      DateTime(d.year, d.month, d.day - (d.weekday - 1) + 6, 23, 59, 59);
+
+  // "À venir" = toutes les répétitions futures non encore terminées
   List<dynamic> get _upcomingRepetitions {
     final now = DateTime.now();
-    // "upcoming" = today or future (including in-progress)
+    final today = DateTime(now.year, now.month, now.day);
     return _repetitions.where((r) {
       final d = _parseDate(r['date']);
       if (d == null) return false;
-      final dayEnd = DateTime(d.year, d.month, d.day, 23, 59, 59);
-      return dayEnd.isAfter(now) || _isSameDay(d, now);
-    }).toList();
+      final day = DateTime(d.year, d.month, d.day);
+      // Exclure les jours passés
+      if (day.isBefore(today)) return false;
+      // Si c'est aujourd'hui, exclure si déjà terminée
+      if (_isSameDay(day, now)) {
+        final endTime = r['endTime'] as String?;
+        if (endTime != null) {
+          final parts = endTime.split(':').map(int.parse).toList();
+          final end = DateTime(day.year, day.month, day.day, parts[0], parts[1]);
+          if (now.isAfter(end)) return false;
+        }
+      }
+      return true;
+    }).toList()
+      ..sort((a, b) {
+        final da = _parseDate(a['date']) ?? DateTime(2099);
+        final db = _parseDate(b['date']) ?? DateTime(2099);
+        return da.compareTo(db);
+      });
   }
 
   List<dynamic> get _historyRepetitions {
@@ -39,14 +63,30 @@ class _PresencesScreenState extends State<PresencesScreen>
     return _repetitions.where((r) {
       final d = _parseDate(r['date']);
       if (d == null) return false;
-      return !_isSameDay(d, now) && d.isBefore(now);
-    }).toList();
+      // Répétitions des jours passés
+      if (!_isSameDay(d, now) && d.isBefore(now)) return true;
+      // Répétitions d'aujourd'hui déjà terminées
+      if (_isSameDay(d, now)) {
+        final endTime = r['endTime'] as String?;
+        if (endTime != null) {
+          final parts = endTime.split(':').map(int.parse).toList();
+          final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
+          return now.isAfter(end);
+        }
+      }
+      return false;
+    }).toList()
+      ..sort((a, b) {
+        final da = _parseDate(a['date']) ?? DateTime(0);
+        final db = _parseDate(b['date']) ?? DateTime(0);
+        return db.compareTo(da); // Plus récent en premier
+      });
   }
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: widget.initialTab);
     _loadData();
   }
 
@@ -148,13 +188,25 @@ class _PresencesScreenState extends State<PresencesScreen>
                       (m['choriste']?['_id'] ?? m['choriste']) == userId,
                   orElse: () => null);
 
+          // ✅ Vérifier si la répétition est terminée (passée ou aujourd'hui après endTime)
+          bool isFinished = isPast;
+          if (!isFinished && date != null && _isSameDay(date, DateTime.now())) {
+            final endTime = rep['endTime'] as String?;
+            if (endTime != null) {
+              final parts = endTime.split(':').map(int.parse).toList();
+              final end = DateTime(date.year, date.month, date.day, parts[0], parts[1]);
+              isFinished = DateTime.now().isAfter(end);
+            }
+          }
+
           if (manual != null) {
             _statusMap[id] = manual['type'] == 'present' ? 'present' : 'absent';
           } else if (present) {
             _statusMap[id] = 'present';
           } else if (absent) {
             _statusMap[id] = 'absent';
-          } else if (isPast) {
+          } else if (isFinished) {
+            // ✅ Répétition terminée sans marquage = absent par défaut
             _statusMap[id] = 'absent_default';
           }
         }
@@ -724,7 +776,7 @@ class _PresencesScreenState extends State<PresencesScreen>
       case 'absent':
         return _badge('✗ Absent', const Color(0xFFDC2626), const Color(0xFFFEE2E2));
       case 'absent_default':
-        return _badge('Non marqué', const Color(0xFF6B7280), const Color(0xFFF3F4F6));
+        return _badge('✗ Absent', const Color(0xFFDC2626), const Color(0xFFFEE2E2));
       default:
         return isLive
             ? _badge('En cours', const Color(0xFF16A34A), const Color(0xFFDCFCE7))
@@ -889,8 +941,8 @@ class _PresencesScreenState extends State<PresencesScreen>
         color = const Color(0xFFEF4444);
         break;
       case 'absent_default':
-        msg = 'Marqué absent automatiquement';
-        color = const Color(0xFF6B7280);
+        msg = 'Absent — pointage non effectué';
+        color = const Color(0xFFEF4444);
         break;
       default:
         msg = 'Passé — modification impossible';
