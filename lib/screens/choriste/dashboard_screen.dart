@@ -1,9 +1,11 @@
+import 'package:cso_mobile/screens/choriste/messagerie_chef_screen.dart';
 import 'package:cso_mobile/screens/choriste/presences_screen.dart';
 import 'package:cso_mobile/screens/choriste/programme_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
+import '../../services/chef_pupitre_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -14,9 +16,12 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final ChoristeService _service = ChoristeService();
+  final ChefPupitreService _chefService = ChefPupitreService();
+
   Map<String, dynamic>? _dashboardData;
   List<dynamic> _allRepetitions = [];
   List<dynamic> _allConcerts = [];
+  List<dynamic> _messages = []; // ← tous les messages reçus
   bool _isLoading = true;
 
   @override
@@ -26,22 +31,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadDashboard() async {
+    setState(() => _isLoading = true);
     try {
-      final data = await _service.getChoristeDashboard();
-      final reps = await _service.getRepetitions();
+      final data     = await _service.getChoristeDashboard();
+      final reps     = await _service.getRepetitions();
       final concerts = await _service.getConcerts();
+
+      List<dynamic> msgs = [];
+      try {
+        msgs = await _chefService.getChoristMessages();
+      } catch (_) {}
+
       setState(() {
-        _dashboardData = data;
-        _allRepetitions = reps;
-        _allConcerts = concerts;
-        _isLoading = false;
+        _dashboardData   = data;
+        _allRepetitions  = reps;
+        _allConcerts     = concerts;
+        _messages        = msgs;
+        _isLoading       = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
     }
   }
 
-  // ── Helpers ──
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   DateTime? _parseDate(dynamic raw) {
     if (raw == null) return null;
@@ -50,11 +63,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
-
-  DateTime _endOfWeek(DateTime d) {
-    final start = DateTime(d.year, d.month, d.day - (d.weekday - 1));
-    return start.add(const Duration(days: 6));
-  }
 
   String _formatDate(dynamic raw) {
     final date = _parseDate(raw);
@@ -65,13 +73,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '${days[date.weekday]} ${date.day} ${months[date.month]} ${date.year}';
   }
 
-  // Répétitions à venir cette semaine
-  // 4 répétitions autour d'aujourd'hui : passées récentes + à venir
-  List<dynamic> get _weekRepetitions {
-    final now = DateTime.now();
+  String _formatDateShort(dynamic raw) {
+    final date = _parseDate(raw);
+    if (date == null) return '';
+    const months = ['', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin',
+        'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+    return '${date.day} ${months[date.month]}';
+  }
+
+  String _formatMsgDate(dynamic raw) {
+    if (raw == null) return '';
+    try {
+      final dt   = DateTime.parse(raw.toString()).toLocal();
+      final now  = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inMinutes < 1)  return 'À l\'instant';
+      if (diff.inMinutes < 60) return 'Il y a ${diff.inMinutes}min';
+      if (diff.inHours   < 24) return 'Il y a ${diff.inHours}h';
+      return _formatDateShort(raw);
+    } catch (_) { return ''; }
+  }
+
+  // ── Répétitions À VENIR uniquement (pas de passées) ──
+  List<dynamic> get _upcomingRepetitions {
+    final now   = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
-    // Helper : est-ce que cette rep est terminée (passée ou aujourd'hui après endTime) ?
     bool isFinished(dynamic r) {
       final d = _parseDate(r['date']);
       if (d == null) return false;
@@ -80,36 +107,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (_isSameDay(day, today)) {
         final endTime = r['endTime'] as String?;
         if (endTime != null) {
-          final parts = endTime.split(':').map(int.parse).toList();
-          final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
-          return now.isAfter(end);
+          try {
+            final parts = endTime.split(':').map(int.parse).toList();
+            final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
+            return now.isAfter(end);
+          } catch (_) {}
         }
       }
       return false;
     }
 
-    // Passées : les 2 dernières terminées
-    final past = _allRepetitions.where(isFinished).toList()
-      ..sort((a, b) {
-        final da = _parseDate(a['date']) ?? DateTime(0);
-        final db = _parseDate(b['date']) ?? DateTime(0);
-        return db.compareTo(da); // plus récent d'abord
-      });
-
-    // À venir : les 2 prochaines non terminées
-    final upcoming = _allRepetitions.where((r) => !isFinished(r)).toList()
+    return _allRepetitions
+        .where((r) => !isFinished(r))
+        .toList()
       ..sort((a, b) {
         final da = _parseDate(a['date']) ?? DateTime(2099);
         final db = _parseDate(b['date']) ?? DateTime(2099);
-        return da.compareTo(db); // plus proche d'abord
+        return da.compareTo(db);
       });
-
-    // Combiner : À venir en haut, passées en bas
-    final combined = [
-      ...upcoming.take(2),
-      ...past.take(2).toList(),
-    ];
-    return combined;
   }
 
   // Prochains concerts
@@ -126,7 +141,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
   }
 
-  // Statut répétition
+  // Statut présence
   String _repStatus(dynamic rep, String userId) {
     final manual = (rep['manualPresences'] as List?)?.firstWhere(
       (m) => (m['choriste']?['_id'] ?? m['choriste']) == userId,
@@ -157,13 +172,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return total > 0 ? (present / total * 100).round() : 0;
   }
 
+  // Couleur pupitre
+  Color _pupitreColor(String p) {
+    switch (p) {
+      case 'soprano': return const Color(0xFF7C3AED);
+      case 'alto':    return const Color(0xFF0891B2);
+      case 'ténor':   return const Color(0xFF059669);
+      case 'basse':   return const Color(0xFFB45309);
+      default:        return const Color(0xFF6B7280);
+    }
+  }
+
+  // ── BUILD ──────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    final user = context.watch<AuthProvider>().user;
+    final user   = context.watch<AuthProvider>().user;
     final userId = user?.id ?? '';
-    final taux = _tauxPresence(userId);
-    final nextConcert = _upcomingConcerts.isNotEmpty ? _upcomingConcerts.first : null;
-    final weekReps = _weekRepetitions;
+    final taux   = _tauxPresence(userId);
+    final upcomingReps = _upcomingRepetitions;
 
     return RefreshIndicator(
       onRefresh: _loadDashboard,
@@ -177,27 +204,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
 
-                  // ── Header CSO ──
+                  // ── Header CSO ──────────────────────────────────────────
                   _buildHeader(user),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
 
-                  // ── Taux de présence (1 seule carte large) ──
+                  // ── Taux de présence ───────────────────────────────────
                   _buildPresenceCard(taux, userId),
-                  const SizedBox(height: 14),
-
-                  // ── Prochain concert ──
-                  if (nextConcert != null) ...[
-                    _buildNextConcertCard(nextConcert, userId),
-                    const SizedBox(height: 20),
-                  ],
-
-                  // ── Répétitions cette semaine ──
-                  _buildSectionTitle('Répétitions',
-                      Icons.event_note_rounded, const Color(0xFF2DD4BF)),
-                  const SizedBox(height: 12),
-                  _buildWeekRepetitions(weekReps, userId),
                   const SizedBox(height: 20),
 
+                  // ── Section : Répétitions à venir ──────────────────────
+                  _buildSectionTitle(
+                    'Répétitions à venir',
+                    Icons.event_note_rounded,
+                    const Color(0xFF2DD4BF),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildUpcomingRepetitions(upcomingReps, userId),
+                  const SizedBox(height: 20),
+
+                  // ── Section : Messages non lus ─────────────────────────
+                  _buildMessagesSectionTitle(user),
+                  const SizedBox(height: 12),
+                  _buildMessagesSection(user),
+                  const SizedBox(height: 20),
+
+                  // ── Section : Prochains concerts ────────────────────────
+                  _buildSectionTitle(
+                    'Prochains concerts',
+                    Icons.stadium_rounded,
+                    const Color(0xFF8B5CF6),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildUpcomingConcerts(userId),
 
                 ],
               ),
@@ -205,7 +243,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── Header CSO compact ──
+  // ── Header CSO ─────────────────────────────────────────────────────────────
   Widget _buildHeader(dynamic user) {
     return Container(
       width: double.infinity,
@@ -255,7 +293,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── Carte taux de présence ──
+  // ── Taux de présence ───────────────────────────────────────────────────────
   Widget _buildPresenceCard(int taux, String userId) {
     Color color;
     String label;
@@ -263,18 +301,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (taux >= 80) {
       color = const Color(0xFF22C55E);
       label = 'Excellente assiduité';
-      icon = Icons.emoji_events_rounded;
+      icon  = Icons.emoji_events_rounded;
     } else if (taux >= 60) {
       color = const Color(0xFFF59E0B);
       label = 'Assiduité correcte';
-      icon = Icons.trending_up_rounded;
+      icon  = Icons.trending_up_rounded;
     } else {
       color = const Color(0xFFEF4444);
       label = 'Assiduité insuffisante';
-      icon = Icons.warning_amber_rounded;
+      icon  = Icons.warning_amber_rounded;
     }
 
-    // Nombre de répétitions passées
     int total = 0, present = 0;
     for (final r in _allRepetitions) {
       final d = _parseDate(r['date']);
@@ -298,10 +335,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Row(
         children: [
-          // Cercle de progression
           SizedBox(
-            width: 72,
-            height: 72,
+            width: 72, height: 72,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -313,9 +348,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 Text('$taux%',
                     style: TextStyle(
-                        color: color,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800)),
+                        color: color, fontSize: 14, fontWeight: FontWeight.w800)),
               ],
             ),
           ),
@@ -324,27 +357,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Taux de présence',
-                    style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1F2937))),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(icon, size: 14, color: color),
-                    const SizedBox(width: 4),
-                    Text(label,
-                        style: TextStyle(
-                            color: color,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text('$present répétition${present > 1 ? 's' : ''} sur $total assistée${present > 1 ? 's' : ''}',
+                const Text('Taux de présence',
                     style: TextStyle(
-                        color: Colors.grey[500], fontSize: 11)),
+                        fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF1F2937))),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Icon(icon, size: 14, color: color),
+                  const SizedBox(width: 4),
+                  Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+                ]),
+                const SizedBox(height: 6),
+                Text(
+                  '$present répétition${present > 1 ? 's' : ''} sur $total assistée${total > 1 ? 's' : ''}',
+                  style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                ),
               ],
             ),
           ),
@@ -353,149 +379,534 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── Prochain concert (carte mise en avant) ──
-  Widget _buildNextConcertCard(dynamic concert, String userId) {
-    final d = _parseDate(concert['dateHeure']);
-    final daysLeft = d != null ? d.difference(DateTime.now()).inDays : null;
+  // ── Répétitions à venir ────────────────────────────────────────────────────
+  Widget _buildUpcomingRepetitions(List<dynamic> reps, String userId) {
+    if (reps.isEmpty) {
+      return _buildEmptyCard(
+        'Aucune répétition à venir',
+        Icons.event_note_rounded,
+        const Color(0xFF2DD4BF),
+      );
+    }
 
-    final dispo = (concert['availableChoristes'] as List?)
-        ?.any((c) => (c['_id'] ?? c) == userId) ?? false;
-    final indispo = (concert['absentChoristes'] as List?)
-        ?.any((a) => (a['choriste']?['_id'] ?? a) == userId) ?? false;
+    return Column(
+      children: reps.take(5).map((rep) {
+        final d       = _parseDate(rep['date']);
+        final now     = DateTime.now();
+        final isToday = d != null && _isSameDay(d, now);
 
-    String statusLabel = 'À confirmer';
-    Color statusColor = const Color(0xFFF59E0B);
-    Color statusBg = const Color(0xFFFFFBEB);
-    if (dispo) { statusLabel = '✓ Disponible'; statusColor = const Color(0xFF16A34A); statusBg = const Color(0xFFDCFCE7); }
-    if (indispo) { statusLabel = '✗ Indisponible'; statusColor = const Color(0xFFDC2626); statusBg = const Color(0xFFFEE2E2); }
-
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => Scaffold(
-            backgroundColor: const Color(0xFFF8FAFC),
-            appBar: AppBar(
-              title: const Text('Programme de la saison',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
-              backgroundColor: Colors.white,
-              elevation: 0,
-              scrolledUnderElevation: 1,
-              shadowColor: Colors.black12,
-              surfaceTintColor: Colors.white,
-              iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
-            ),
-            body: const ProgrammeScreen(),
-          ),
-        ),
-      ),
-      child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1E1B4B), Color(0xFF312E81)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-              color: const Color(0xFF8B5CF6).withValues(alpha: 0.25),
-              blurRadius: 20,
-              offset: const Offset(0, 6)),
-        ],
-      ),
-      child: Row(
-        children: [
-          // Countdown
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  daysLeft != null ? 'J-$daysLeft' : '—',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      height: 1),
+        return GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => Scaffold(
+                backgroundColor: const Color(0xFFF8FAFC),
+                appBar: AppBar(
+                  title: const Text('Gérer les présences',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
+                  backgroundColor: Colors.white,
+                  elevation: 0,
+                  scrolledUnderElevation: 1,
+                  shadowColor: Colors.black12,
+                  surfaceTintColor: Colors.white,
+                  iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
                 ),
-                const Text('jours',
-                    style: TextStyle(color: Colors.white54, fontSize: 9)),
-              ],
+                body: const PresencesScreen(initialTab: 0),
+              ),
             ),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Prochain concert',
-                    style: TextStyle(
-                        color: Colors.white54,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0.5)),
-                const SizedBox(height: 3),
-                Text(concert['title'] ?? 'Concert',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
-                Row(children: [
-                  const Icon(Icons.calendar_today_rounded,
-                      size: 11, color: Colors.white38),
-                  const SizedBox(width: 4),
-                  Text(_formatDate(concert['dateHeure']),
-                      style: const TextStyle(
-                          color: Colors.white54, fontSize: 11)),
-                ]),
-                if (concert['location'] != null) ...[
-                  const SizedBox(height: 2),
-                  Row(children: [
-                    const Icon(Icons.location_on_rounded,
-                        size: 11, color: Colors.white38),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(concert['location'],
-                          style: const TextStyle(
-                              color: Colors.white54, fontSize: 11),
-                          overflow: TextOverflow.ellipsis),
-                    ),
-                  ]),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-                color: statusBg, borderRadius: BorderRadius.circular(20)),
-            child: Text(statusLabel,
-                style: TextStyle(
-                    color: statusColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600)),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: isToday
+                  ? Border.all(color: const Color(0xFF2DD4BF).withValues(alpha: 0.5), width: 1.5)
+                  : Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2)),
+              ],
+            ),
+            child: Row(
+              children: [
+                // Icone + badge Aujourd'hui
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 44, height: 44,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2DD4BF).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.library_music_rounded,
+                          color: Color(0xFF2DD4BF), size: 20),
+                    ),
+                    if (isToday)
+                      Positioned(
+                        top: -6, right: -6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2DD4BF),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: const Text('Auj.',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                // Détails
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        rep['concert']?['title'] != null
+                            ? 'Répétition · ${rep['concert']['title']}'
+                            : 'Répétition',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: Color(0xFF1F2937)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 2,
+                        children: [
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(Icons.calendar_today_rounded,
+                                size: 11, color: Color(0xFF94A3B8)),
+                            const SizedBox(width: 4),
+                            Text(_formatDate(rep['date']),
+                                style: const TextStyle(
+                                    color: Color(0xFF64748B), fontSize: 11)),
+                          ]),
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(Icons.access_time_rounded,
+                                size: 11, color: Color(0xFF94A3B8)),
+                            const SizedBox(width: 4),
+                            Text('${rep['startTime']} – ${rep['endTime']}',
+                                style: const TextStyle(
+                                    color: Color(0xFF64748B), fontSize: 11)),
+                          ]),
+                        ],
+                      ),
+                      if (rep['location'] != null) ...[
+                        const SizedBox(height: 3),
+                        Row(children: [
+                          const Icon(Icons.location_on_rounded,
+                              size: 11, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(rep['location'],
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Color(0xFF64748B), fontSize: 11)),
+                          ),
+                        ]),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Badge À venir
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: isToday
+                        ? const Color(0xFFECFDF5)
+                        : const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    isToday ? 'Aujourd\'hui' : 'À venir',
+                    style: TextStyle(
+                      color: isToday
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFFF59E0B),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right_rounded,
+                    size: 16, color: Color(0xFFCBD5E1)),
+              ],
+            ),
           ),
-        ],
-      ),
-    ), // end Container
-    ); // end GestureDetector
+        );
+      }).toList(),
+    );
   }
 
-  // ── Section title ──
+  // ── Titre section messages avec badge non lus ────────────────────────────
+  Widget _buildMessagesSectionTitle(dynamic user) {
+    final pColor = _pupitreColor(user?.pupitre ?? '');
+    final unreadCount = _messages.where((m) => m['readAt'] == null).length;
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+              color: pColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8)),
+          child: Icon(Icons.mark_chat_read_rounded, size: 15, color: pColor),
+        ),
+        const SizedBox(width: 10),
+        const Text('Messages non lus',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF1F2937))),
+        if (unreadCount > 0) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: pColor,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text('$unreadCount',
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ── Section Messages ───────────────────────────────────────────────────────
+  Widget _buildMessagesSection(dynamic user) {
+    final pupitre = user?.pupitre as String? ?? '';
+    final pColor  = _pupitreColor(pupitre);
+
+    // Filtrer uniquement les messages non lus
+    final unreadMessages = _messages.where((m) => m['readAt'] == null).toList();
+
+    // Toujours afficher le container — avec messages non lus ou état vide
+    if (unreadMessages.isEmpty) {
+      // État vide sobre
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.mark_chat_read_rounded,
+                  color: Color(0xFFCBD5E1), size: 20),
+            ),
+            const SizedBox(width: 14),
+            const Text(
+              'Pas de messages pour le moment',
+              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Afficher les 3 derniers messages
+    final toShow = unreadMessages.take(3).toList();
+    return Column(
+      children: [
+        ...toShow.map((msg) {
+          final sender = msg['senderId'] as Map?;
+          final isRead = msg['readAt'] != null;
+          return GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MessagesChoristScreen()),
+            ).then((_) => _loadDashboard()),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isRead
+                      ? const Color(0xFFE2E8F0)
+                      : pColor.withValues(alpha: 0.35),
+                  width: isRead ? 1 : 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2)),
+                ],
+              ),
+              child: Row(
+                children: [
+                  // Avatar expéditeur
+                  Container(
+                    width: 38, height: 38,
+                    decoration: BoxDecoration(
+                      color: pColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Center(
+                      child: Text(
+                        sender != null
+                            ? '${sender['firstName']?[0] ?? '?'}'
+                            : '?',
+                        style: TextStyle(
+                            color: pColor,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.star_rounded,
+                                size: 11, color: Color(0xFFD97706)),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${sender?['firstName'] ?? ''} ${sender?['lastName'] ?? ''} · Chef',
+                              style: const TextStyle(
+                                  color: Color(0xFFD97706),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          msg['content'] ?? '',
+                          style: TextStyle(
+                            color: isRead
+                                ? const Color(0xFF64748B)
+                                : const Color(0xFF1E293B),
+                            fontSize: 13,
+                            fontWeight: isRead ? FontWeight.w400 : FontWeight.w600,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(_formatMsgDate(msg['createdAt']),
+                          style: const TextStyle(
+                              color: Color(0xFFCBD5E1), fontSize: 10)),
+                      const SizedBox(height: 6),
+                      if (!isRead)
+                        Container(
+                          width: 8, height: 8,
+                          decoration: BoxDecoration(
+                              color: pColor, shape: BoxShape.circle),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        // Bouton "Voir tous" si plus de 3
+        if (unreadMessages.length > 3)
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MessagesChoristScreen()),
+            ).then((_) => _loadDashboard()),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              decoration: BoxDecoration(
+                color: pColor.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: pColor.withValues(alpha: 0.2)),
+              ),
+              child: Center(
+                child: Text(
+                  'Voir tous les messages (${_messages.length})',
+                  style: TextStyle(
+                      color: pColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ── Prochains concerts ─────────────────────────────────────────────────────
+  Widget _buildUpcomingConcerts(String userId) {
+    final concerts = _upcomingConcerts.take(3).toList();
+    if (concerts.isEmpty) {
+      return _buildEmptyCard(
+          'Aucun concert à venir',
+          Icons.stadium_rounded,
+          const Color(0xFF8B5CF6));
+    }
+    return Column(
+      children: concerts.map((concert) {
+        final d        = _parseDate(concert['dateHeure']);
+        final daysLeft = d != null ? d.difference(DateTime.now()).inDays : null;
+
+        final dispo   = (concert['availableChoristes'] as List?)
+            ?.any((c) => (c['_id'] ?? c) == userId) ?? false;
+        final indispo = (concert['absentChoristes'] as List?)
+            ?.any((a) => (a['choriste']?['_id'] ?? a) == userId) ?? false;
+        String statusLabel = 'À confirmer';
+        Color  statusColor = const Color(0xFFF59E0B);
+        Color  statusBg    = const Color(0xFFFFFBEB);
+        if (dispo)   { statusLabel = '✓ Dispo';   statusColor = const Color(0xFF16A34A); statusBg = const Color(0xFFDCFCE7); }
+        if (indispo) { statusLabel = '✗ Indispo'; statusColor = const Color(0xFFDC2626); statusBg = const Color(0xFFFEE2E2); }
+
+        return GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => Scaffold(
+                backgroundColor: const Color(0xFFF8FAFC),
+                appBar: AppBar(
+                  title: const Text('Programme de la saison',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1E293B))),
+                  backgroundColor: Colors.white,
+                  elevation: 0,
+                  scrolledUnderElevation: 1,
+                  shadowColor: Colors.black12,
+                  surfaceTintColor: Colors.white,
+                  iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
+                ),
+                body: const ProgrammeScreen(),
+              ),
+            ),
+          ),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2)),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 46, height: 46,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFF8B5CF6).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10)),
+                  child: daysLeft != null
+                      ? Center(
+                          child: Text('J-$daysLeft',
+                              style: const TextStyle(
+                                  color: Color(0xFF8B5CF6),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800)))
+                      : const Icon(Icons.celebration_rounded,
+                          color: Color(0xFF8B5CF6), size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(concert['title'] ?? 'Concert',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: Color(0xFF1F2937))),
+                      const SizedBox(height: 4),
+                      Row(children: [
+                        const Icon(Icons.calendar_today_rounded,
+                            size: 11, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 4),
+                        Text(_formatDate(concert['dateHeure']),
+                            style: const TextStyle(
+                                color: Color(0xFF64748B), fontSize: 11)),
+                      ]),
+                      if (concert['location'] != null) ...[
+                        const SizedBox(height: 3),
+                        Row(children: [
+                          const Icon(Icons.location_on_rounded,
+                              size: 11, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(concert['location'],
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Color(0xFF64748B), fontSize: 11)),
+                          ),
+                        ]),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                      color: statusBg,
+                      borderRadius: BorderRadius.circular(20)),
+                  child: Text(statusLabel,
+                      style: TextStyle(
+                          color: statusColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right_rounded,
+                    size: 16, color: Color(0xFFCBD5E1)),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── Section title ──────────────────────────────────────────────────────────
   Widget _buildSectionTitle(String title, IconData icon, Color color) {
     return Row(
       children: [
@@ -516,292 +927,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── Répétitions cette semaine ──
-  Widget _buildWeekRepetitions(List<dynamic> reps, String userId) {
-    if (reps.isEmpty) {
-      return _buildEmptyCard(
-          'Aucune répétition cette semaine', Icons.event_note_rounded, const Color(0xFF2DD4BF));
-    }
-    return Column(
-      children: reps.map((rep) {
-        final status = _repStatus(rep, userId);
-        final d = _parseDate(rep['date']);
-        final now = DateTime.now();
-        final isToday = d != null && _isSameDay(d, now);
-
-        // Passée = jour antérieur OU (aujourd'hui ET heure de fin dépassée)
-        bool isPast = d != null && !isToday && d.isBefore(now);
-        if (!isPast && isToday && d != null) {
-          final endTime = rep['endTime'] as String?;
-          if (endTime != null) {
-            final parts = endTime.split(':').map(int.parse).toList();
-            final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
-            if (now.isAfter(end)) isPast = true;
-          }
-        }
-
-        // Dashboard : passée = "Passée" gris (détail présent/absent dans page Présences)
-        final Color accentColor = isPast ? const Color(0xFF9CA3AF) : const Color(0xFFF59E0B);
-        final String statusLabel = isPast ? 'Passée' : 'À venir';
-        final Color statusBg = isPast ? const Color(0xFFF1F5F9) : const Color(0xFFFFFBEB);
-
-        return GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => Scaffold(
-                backgroundColor: const Color(0xFFF8FAFC),
-                appBar: AppBar(
-                  title: const Text('Gérer les présences',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
-                  backgroundColor: Colors.white,
-                  elevation: 0,
-                  scrolledUnderElevation: 1,
-                  shadowColor: Colors.black12,
-                  surfaceTintColor: Colors.white,
-                  iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
-                ),
-                body: PresencesScreen(initialTab: isPast ? 1 : 0),
-              ),
-            ),
-          ),
-          child: Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: isPast ? const Color(0xFFFAFAFA) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: isToday
-                ? Border.all(color: const Color(0xFF2DD4BF).withValues(alpha: 0.4), width: 1.5)
-                : isPast ? Border.all(color: const Color(0xFFE5E7EB)) : null,
-            boxShadow: isPast ? [] : [
-              BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2))
-            ],
-          ),
-          child: Row(
-            children: [
-              // Icône avec badge Aujourd'hui
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2DD4BF).withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.library_music_rounded,
-                        color: Color(0xFF2DD4BF), size: 20),
-                  ),
-                  if (isToday)
-                    Positioned(
-                      top: -6, right: -6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2DD4BF),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text('Auj.',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 7,
-                                fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Répétition',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                            color: Color(0xFF1F2937))),
-                    if (rep['concert']?['title'] != null) ...[
-                      const SizedBox(height: 2),
-                      Text(rep['concert']['title'],
-                          style: const TextStyle(
-                              color: Color(0xFF64748B), fontSize: 11)),
-                    ],
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 3,
-                      children: [
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.calendar_today_rounded,
-                              size: 11, color: Color(0xFF94A3B8)),
-                          const SizedBox(width: 4),
-                          Text(_formatDate(rep['date']),
-                              style: const TextStyle(
-                                  color: Color(0xFF64748B), fontSize: 11)),
-                        ]),
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.access_time_rounded,
-                              size: 11, color: Color(0xFF94A3B8)),
-                          const SizedBox(width: 4),
-                          Text('${rep['startTime']} – ${rep['endTime']}',
-                              style: const TextStyle(
-                                  color: Color(0xFF64748B), fontSize: 11)),
-                        ]),
-                      ],
-                    ),
-                    if (rep['location'] != null) ...[
-                      const SizedBox(height: 3),
-                      Row(children: [
-                        const Icon(Icons.location_on_rounded,
-                            size: 11, color: Color(0xFF94A3B8)),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(rep['location'],
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: Color(0xFF64748B), fontSize: 11)),
-                        ),
-                      ]),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                    color: statusBg,
-                    borderRadius: BorderRadius.circular(20)),
-                child: Text(statusLabel,
-                    style: TextStyle(
-                        color: accentColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded,
-                  size: 16, color: Color(0xFFCBD5E1)),
-            ],
-          ),
-        ), // end Container
-        ); // end GestureDetector
-      }).toList(),
-    );
-  }
-
-  // ── Prochains concerts ──
-  Widget _buildUpcomingConcerts(String userId) {
-    final concerts = _upcomingConcerts.take(3).toList();
-    if (concerts.isEmpty) {
-      return _buildEmptyCard(
-          'Aucun concert à venir', Icons.stadium_rounded, const Color(0xFF8B5CF6));
-    }
-    return Column(
-      children: concerts.map((concert) {
-        final d = _parseDate(concert['dateHeure']);
-        final daysLeft = d != null ? d.difference(DateTime.now()).inDays : null;
-
-        final dispo = (concert['availableChoristes'] as List?)
-            ?.any((c) => (c['_id'] ?? c) == userId) ?? false;
-        final indispo = (concert['absentChoristes'] as List?)
-            ?.any((a) => (a['choriste']?['_id'] ?? a) == userId) ?? false;
-        String statusLabel = 'À confirmer';
-        Color statusColor = const Color(0xFFF59E0B);
-        Color statusBg = const Color(0xFFFFFBEB);
-        if (dispo) { statusLabel = '✓ Dispo'; statusColor = const Color(0xFF16A34A); statusBg = const Color(0xFFDCFCE7); }
-        if (indispo) { statusLabel = '✗ Indispo'; statusColor = const Color(0xFFDC2626); statusBg = const Color(0xFFFEE2E2); }
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2))
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10)),
-                child: daysLeft != null
-                    ? Center(
-                        child: Text('J-$daysLeft',
-                            style: const TextStyle(
-                                color: Color(0xFF8B5CF6),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800)))
-                    : const Icon(Icons.celebration_rounded,
-                        color: Color(0xFF8B5CF6), size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(concert['title'] ?? 'Concert',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                            color: Color(0xFF1F2937))),
-                    const SizedBox(height: 5),
-                    Row(children: [
-                      const Icon(Icons.calendar_today_rounded,
-                          size: 11, color: Color(0xFF94A3B8)),
-                      const SizedBox(width: 4),
-                      Text(_formatDate(concert['dateHeure']),
-                          style: const TextStyle(
-                              color: Color(0xFF64748B), fontSize: 11)),
-                    ]),
-                    if (concert['location'] != null) ...[
-                      const SizedBox(height: 3),
-                      Row(children: [
-                        const Icon(Icons.location_on_rounded,
-                            size: 11, color: Color(0xFF94A3B8)),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(concert['location'],
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: Color(0xFF64748B), fontSize: 11)),
-                        ),
-                      ]),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                    color: statusBg, borderRadius: BorderRadius.circular(20)),
-                child: Text(statusLabel,
-                    style: TextStyle(
-                        color: statusColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  // ── Empty state ──
+  // ── Empty card ─────────────────────────────────────────────────────────────
   Widget _buildEmptyCard(String message, IconData icon, Color color) {
     return Container(
       width: double.infinity,
@@ -809,8 +935,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)
+          BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6),
         ],
       ),
       child: Column(
@@ -818,11 +945,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.08), shape: BoxShape.circle),
-            child: Icon(icon, size: 26, color: color.withValues(alpha: 0.4)),
+                color: color.withValues(alpha: 0.07), shape: BoxShape.circle),
+            child: Icon(icon, size: 26, color: color.withValues(alpha: 0.35)),
           ),
           const SizedBox(height: 10),
-          Text(message, style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+          Text(message, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
         ],
       ),
     );

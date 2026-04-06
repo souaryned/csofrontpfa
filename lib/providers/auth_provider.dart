@@ -64,7 +64,12 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    await _authService.logout();
+    // ✅ Ordre correct :
+    // 1. Dissocier le token FCM (pendant que le JWT est encore valide)
+    // 2. Supprimer le JWT local
+    // 3. Vider l'état
+    await NotificationService.clearTokenOnLogout();
+    await _authService.logout(); // supprime le JWT du storage
     _user = null;
     notifyListeners();
   }
