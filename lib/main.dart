@@ -1,12 +1,16 @@
+import 'package:cso_mobile/screens/choriste/chef_pupitre_screen.dart';
+import 'package:cso_mobile/screens/choriste/messagerie_chef_screen.dart';
 import 'package:cso_mobile/screens/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/oeuvre_provider.dart'; // ✅ Ajout
 import 'services/notification_service.dart';
 
-// ✅ Le vrai screen de gestion des présences
+// ✅ Screens existants
 import 'screens/choriste/presences_screen.dart';
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +33,7 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: authProvider),
+        ChangeNotifierProvider(create: (_) => OeuvreProvider()), // ✅ Ajout
       ],
       child: MaterialApp(
         title: 'CSO Mobile',
@@ -44,8 +49,8 @@ class MyApp extends StatelessWidget {
 
         home: const SplashScreen(),
 
-        // ✅ Route vers le screen de présences
         routes: {
+          // ✅ Existant — répétitions / présences choriste
           '/repetitions': (context) => Scaffold(
                 appBar: AppBar(
                   title: const Text('Répétitions'),
@@ -54,6 +59,12 @@ class MyApp extends StatelessWidget {
                 ),
                 body: const PresencesScreen(),
               ),
+
+          // ✅ Nouveau — espace chef de pupitre (présences + messagerie)
+          '/chef-pupitre': (context) => const ChefPupitreScreen(),
+
+          // ✅ Nouveau — messages reçus par le choriste (de son chef de pupitre)
+          '/messages': (context) => const MessagesChoristScreen(),
         },
       ),
     );
