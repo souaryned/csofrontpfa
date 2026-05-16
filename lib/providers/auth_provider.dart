@@ -9,7 +9,7 @@ class AuthProvider extends ChangeNotifier {
 
   UserModel? _user;
   bool _isLoading = false;
-  bool _isInitializing = true; // true pendant loadUser() au démarrage
+  bool _isInitializing = true;
   String? _errorMessage;
 
   UserModel? get user => _user;
@@ -20,14 +20,6 @@ class AuthProvider extends ChangeNotifier {
 
   // ─────────────────────────────────────────────────────────────
   // CHARGEMENT AU DÉMARRAGE
-  //
-  // Appelé dans main() avant runApp().
-  // AuthService.getMe() lit le token JWT depuis flutter_secure_storage
-  // et appelle GET /auth/me pour le valider.
-  //   → valide   : _user rempli, SplashScreen → HomeScreen
-  //   → expiré   : getMe() supprime le token, retourne null → LoginScreen
-  //   → pas réseau : getMe() retourne null → LoginScreen
-  //     (amélioration possible : cache local hors-ligne)
   // ─────────────────────────────────────────────────────────────
 
   Future<void> loadUser() async {
@@ -35,7 +27,6 @@ class AuthProvider extends ChangeNotifier {
       _user = await _authService.getMe();
 
       // Si connecté → rafraîchir le token FCM silencieusement
-      // sans bloquer : garantit que le backend a toujours le bon token
       if (_user != null) {
         NotificationService.saveTokenAfterLogin();
       }
@@ -104,7 +95,10 @@ class AuthProvider extends ChangeNotifier {
   // ─────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
-    // Supprimer le token FCM du backend → plus de notifications après logout
+    // Ordre correct :
+    // 1. Dissocier le token FCM du backend (pendant que le JWT est encore valide)
+    // 2. Supprimer le JWT local
+    // 3. Vider l'état
     try {
       await NotificationService.deleteTokenOnLogout();
     } catch (_) {}

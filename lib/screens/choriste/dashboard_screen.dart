@@ -1,9 +1,11 @@
+import 'package:cso_mobile/screens/choriste/messagerie_chef_screen.dart';
 import 'package:cso_mobile/screens/choriste/presences_screen.dart';
 import 'package:cso_mobile/screens/choriste/programme_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
+import '../../services/chef_pupitre_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -18,10 +20,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // ─────────────────────────────────────────────────────────────
 
   final ChoristeService _service = ChoristeService();
+  final ChefPupitreService _chefService = ChefPupitreService();
 
   Map<String, dynamic>? _dashboardData;
   List<dynamic> _allRepetitions = [];
   List<dynamic> _allConcerts = [];
+  List<dynamic> _messages = [];
   bool _isLoading = true;
 
   /// Map<repId, List<minutesBefore>> — rappels actifs non envoyés
@@ -57,17 +61,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadDashboard() async {
+    setState(() => _isLoading = true);
     try {
       final data = await _service.getChoristeDashboard();
       final reps = await _service.getRepetitions();
       final concerts = await _service.getConcerts();
       final reminders = await _service.getAllMyReminders();
 
+      List<dynamic> msgs = [];
+      try {
+        msgs = await _chefService.getChoristMessages();
+      } catch (_) {}
+
       if (!mounted) return;
       setState(() {
         _dashboardData = data;
         _allRepetitions = reps;
         _allConcerts = concerts;
+        _messages = msgs;
         _repReminders
           ..clear()
           ..addAll(reminders);
@@ -117,6 +128,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '${days[date.weekday]} ${date.day} ${months[date.month]} ${date.year}';
   }
 
+  String _formatDateShort(dynamic raw) {
+    final date = _parseDate(raw);
+    if (date == null) return '';
+    const months = [
+      '',
+      'Jan',
+      'Fév',
+      'Mar',
+      'Avr',
+      'Mai',
+      'Juin',
+      'Juil',
+      'Août',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Déc',
+    ];
+    return '${date.day} ${months[date.month]}';
+  }
+
+  String _formatMsgDate(dynamic raw) {
+    if (raw == null) return '';
+    try {
+      final dt = DateTime.parse(raw.toString()).toLocal();
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inMinutes < 1) return 'À l\'instant';
+      if (diff.inMinutes < 60) return 'Il y a ${diff.inMinutes}min';
+      if (diff.inHours < 24) return 'Il y a ${diff.inHours}h';
+      return _formatDateShort(raw);
+    } catch (_) {
+      return '';
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────
   // HELPERS — RAPPELS
   // ─────────────────────────────────────────────────────────────
@@ -148,9 +195,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (_isSameDay(day, today)) {
         final endTime = r['endTime'] as String?;
         if (endTime != null) {
-          final parts = endTime.split(':').map(int.parse).toList();
-          final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
-          return now.isAfter(end);
+          try {
+            final parts = endTime.split(':').map(int.parse).toList();
+            final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
+            return now.isAfter(end);
+          } catch (_) {}
         }
       }
       return false;
@@ -228,12 +277,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return total > 0 ? (present / total * 100).round() : 0;
   }
 
+  Color _pupitreColor(String p) {
+    switch (p) {
+      case 'soprano':
+        return const Color(0xFF7C3AED);
+      case 'alto':
+        return const Color(0xFF0891B2);
+      case 'ténor':
+        return const Color(0xFF059669);
+      case 'basse':
+        return const Color(0xFFB45309);
+      default:
+        return const Color(0xFF6B7280);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────
   // ACTIONS — GESTION DES RAPPELS
   // ─────────────────────────────────────────────────────────────
 
-  /// Ajoute un rappel avec mise à jour optimiste.
-  /// Met à jour setState (parent) ET setSheet (bottom sheet) immédiatement.
   Future<void> _addReminder(
     String repId,
     int minutes,
@@ -247,7 +309,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final newList = [...current, minutes]..sort();
 
-    // Mise à jour optimiste
     setState(() => _repReminders[repId] = newList);
     setSheet(() {});
 
@@ -255,7 +316,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!mounted) return;
 
     if (!success) {
-      // Rollback
       setState(() {
         if (current.isEmpty) {
           _repReminders.remove(repId);
@@ -270,7 +330,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  /// Supprime un rappel précis avec mise à jour optimiste.
   Future<void> _removeReminder(
     String repId,
     int minutes,
@@ -279,7 +338,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final current = _getReminders(repId);
     final newList = current.where((m) => m != minutes).toList();
 
-    // Mise à jour optimiste
     setState(() {
       if (newList.isEmpty) {
         _repReminders.remove(repId);
@@ -293,7 +351,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!mounted) return;
 
     if (!success) {
-      // Rollback
       setState(() => _repReminders[repId] = current);
       setSheet(() {});
       _showSnackError('Erreur lors de la suppression du rappel.');
@@ -302,11 +359,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  /// Supprime tous les rappels d'une répétition avec mise à jour optimiste.
   Future<void> _removeAllReminders(String repId, StateSetter setSheet) async {
     final previous = _getReminders(repId);
 
-    // Mise à jour optimiste
     setState(() => _repReminders.remove(repId));
     setSheet(() {});
 
@@ -314,7 +369,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!mounted) return;
 
     if (!success) {
-      // Rollback
       setState(() => _repReminders[repId] = previous);
       setSheet(() {});
       _showSnackError('Erreur lors de la suppression des rappels.');
@@ -366,8 +420,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // UI — PICKER PERSONNALISÉ
   // ─────────────────────────────────────────────────────────────
 
-  /// Affiche un dialog de saisie d'un délai personnalisé (heures + minutes).
-  /// Retourne le total en minutes, ou null si annulé.
   Future<int?> _showCustomMinutesPicker(BuildContext ctx) async {
     int hours = 0;
     int minutes = 30;
@@ -395,7 +447,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // ── Heures ──
                   Column(
                     children: [
                       const Text(
@@ -441,7 +492,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   ),
-                  // ── Minutes ──
                   Column(
                     children: [
                       const Text(
@@ -484,7 +534,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
               const SizedBox(height: 12),
-              // ── Aperçu ──
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
@@ -561,15 +610,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // UI — BOTTOM SHEET RAPPELS
   // ─────────────────────────────────────────────────────────────
 
-  /// Ouvre le bottom sheet de gestion des rappels pour une répétition.
-  ///
-  /// CORRECTIONS APPLIQUÉES :
-  /// 1. Le custom picker utilise `ctx` (contexte du StatefulBuilder du sheet)
-  ///    et non `context` (Scaffold) → le dialog s'affiche par-dessus le sheet.
-  /// 2. Le sheet ne se ferme PLUS avant d'ouvrir le custom picker.
-  /// 3. Après validation du picker, on appelle _addReminder(repId, custom, setSheet)
-  ///    → mise à jour optimiste + setSheet() → le sheet se rafraîchit sans fermeture.
-  /// 4. La vérification de doublon est centralisée dans _addReminder.
   void _showReminderSheet(BuildContext context, dynamic rep) {
     final repId = rep['_id'].toString();
 
@@ -581,7 +621,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
-          // Toujours lire depuis _repReminders à chaque rebuild
           final currentReminders = _getReminders(repId);
 
           return SafeArea(
@@ -592,7 +631,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ── Handle ────────────────────────────────────
                   Container(
                     margin: const EdgeInsets.only(top: 12),
                     width: 40,
@@ -603,8 +641,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-
-                  // ── En-tête ───────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
@@ -648,8 +684,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
-                  // ── Rappels actifs ────────────────────────────
                   if (currentReminders.isNotEmpty) ...[
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -701,8 +735,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 4),
                     const Divider(height: 24),
                   ],
-
-                  // ── Titre section ajout ───────────────────────
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
                     child: Align(
@@ -719,8 +751,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   ),
-
-                  // ── Liste des presets ─────────────────────────
                   Flexible(
                     child: SingleChildScrollView(
                       child: Column(
@@ -779,18 +809,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ? null
                                   : () async {
                                       if (val == -1) {
-                                        // ✅ FIX 1 : on utilise `ctx` (contexte du sheet)
-                                        //    → le dialog s'affiche PAR-DESSUS le sheet
-                                        //    sans le fermer.
-                                        // ✅ FIX 2 : on ne ferme PLUS le sheet avant
-                                        //    d'ouvrir le picker.
                                         final custom =
                                             await _showCustomMinutesPicker(ctx);
-
-                                        // ✅ FIX 3 : on appelle _addReminder qui gère
-                                        //    la vérification de doublon, la mise à jour
-                                        //    optimiste et le setSheet → le sheet se
-                                        //    rafraîchit sans être fermé/rouvert.
                                         if (custom != null && custom >= 1) {
                                           await _addReminder(
                                             repId,
@@ -876,10 +896,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — BADGE INLINE (carte répétition)
-  // ─────────────────────────────────────────────────────────────
-
   Widget _inlineReminderBadge(int min) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
@@ -944,6 +960,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _buildNextConcertCard(nextConcert, userId),
                     const SizedBox(height: 20),
                   ],
+
+                  // Messages non lus
+                  _buildMessagesSectionTitle(user),
+                  const SizedBox(height: 12),
+                  _buildMessagesSection(user),
+                  const SizedBox(height: 20),
+
                   _buildSectionTitle(
                     'Répétitions',
                     Icons.event_note_rounded,
@@ -1135,6 +1158,249 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // WIDGETS — SECTION MESSAGES
+  // ─────────────────────────────────────────────────────────────
+
+  Widget _buildMessagesSectionTitle(dynamic user) {
+    final pColor = _pupitreColor(user?.pupitre ?? '');
+    final unreadCount = _messages.where((m) => m['readAt'] == null).length;
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: pColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(Icons.mark_chat_read_rounded, size: 15, color: pColor),
+        ),
+        const SizedBox(width: 10),
+        const Text(
+          'Messages non lus',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF1F2937),
+          ),
+        ),
+        if (unreadCount > 0) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: pColor,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '$unreadCount',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMessagesSection(dynamic user) {
+    final pupitre = user?.pupitre as String? ?? '';
+    final pColor = _pupitreColor(pupitre);
+    final unreadMessages = _messages.where((m) => m['readAt'] == null).toList();
+
+    if (unreadMessages.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(
+                Icons.mark_chat_read_rounded,
+                color: Color(0xFFCBD5E1),
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 14),
+            const Text(
+              'Pas de messages pour le moment',
+              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final toShow = unreadMessages.take(3).toList();
+    return Column(
+      children: [
+        ...toShow.map((msg) {
+          final sender = msg['senderId'] as Map?;
+          final isRead = msg['readAt'] != null;
+          return GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MessagesChoristScreen()),
+            ).then((_) => _loadDashboard()),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isRead
+                      ? const Color(0xFFE2E8F0)
+                      : pColor.withOpacity(0.35),
+                  width: isRead ? 1 : 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: pColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Center(
+                      child: Text(
+                        sender != null
+                            ? '${sender['firstName']?[0] ?? '?'}'
+                            : '?',
+                        style: TextStyle(
+                          color: pColor,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.star_rounded,
+                              size: 11,
+                              color: Color(0xFFD97706),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${sender?['firstName'] ?? ''} ${sender?['lastName'] ?? ''} · Chef',
+                              style: const TextStyle(
+                                color: Color(0xFFD97706),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          msg['content'] ?? '',
+                          style: TextStyle(
+                            color: isRead
+                                ? const Color(0xFF64748B)
+                                : const Color(0xFF1E293B),
+                            fontSize: 13,
+                            fontWeight: isRead
+                                ? FontWeight.w400
+                                : FontWeight.w600,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _formatMsgDate(msg['createdAt']),
+                        style: const TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 10,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      if (!isRead)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: pColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        if (unreadMessages.length > 3)
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MessagesChoristScreen()),
+            ).then((_) => _loadDashboard()),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              decoration: BoxDecoration(
+                color: pColor.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: pColor.withOpacity(0.2)),
+              ),
+              child: Center(
+                child: Text(
+                  'Voir tous les messages (${_messages.length})',
+                  style: TextStyle(
+                    color: pColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // WIDGETS — CARTE PROCHAIN CONCERT
   // ─────────────────────────────────────────────────────────────
 
@@ -1214,7 +1480,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         child: Row(
           children: [
-            // ── Countdown ──
             Container(
               width: 60,
               height: 60,
@@ -1243,7 +1508,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const SizedBox(width: 14),
-            // ── Infos concert ──
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1313,7 +1577,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            // ── Badge disponibilité ──
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -1456,7 +1719,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             child: Row(
               children: [
-                // ── Icône + badge "Auj." ──
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
@@ -1499,8 +1761,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
                 const SizedBox(width: 12),
-
-                // ── Informations répétition ──
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1589,7 +1849,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ],
                         ),
                       ],
-                      // ── Badges rappels actifs (visibles sur la carte) ──
                       if (!isPast && hasReminders) ...[
                         const SizedBox(height: 6),
                         Wrap(
@@ -1603,8 +1862,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ],
                   ),
                 ),
-
-                // ── Colonne droite : statut + cloche ──
                 Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -1652,7 +1909,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     : Colors.grey.shade400,
                               ),
                             ),
-                            // Badge nombre de rappels si > 1
                             if (reminders.length > 1)
                               Positioned(
                                 top: -4,
@@ -1707,6 +1963,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
         ],

@@ -19,6 +19,8 @@ import 'choriste_service.dart';
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   if (kDebugMode) print('[FCM BG] ${message.notification?.title}');
+  // NOTE : en background, Android affiche automatiquement la notif système.
+  // Pas besoin de flutter_local_notifications ici.
 }
 
 @pragma('vm:entry-point')
@@ -110,18 +112,34 @@ class NotificationService {
 
   static void _setupListeners() {
     // Message en foreground → afficher notification locale
+    // Gère aussi les data-only messages (sans notification block)
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (kDebugMode) {
-        print('[FCM FG] ${message.notification?.title}');
+        print(
+          '[FCM FG] ${message.notification?.title ?? message.data['type']}',
+        );
         print('[FCM FG] data: ${message.data}');
       }
+
       final notif = message.notification;
       if (notif != null) {
+        // Message avec bloc notification
         _showLocalNotification(
           title: notif.title ?? '',
           body: notif.body ?? '',
           payload: message.data['type'] ?? '',
         );
+      } else if (message.data.isNotEmpty) {
+        // Data-only message → construire la notif manuellement
+        final type = message.data['type'] ?? '';
+        String title = 'CSO';
+        String body = 'Vous avez un nouveau message';
+        if (type == 'chef_message') {
+          final sender = message.data['senderName'] ?? 'Votre chef de pupitre';
+          body = message.data['content'] ?? 'Nouveau message de $sender';
+          title = 'Message de $sender';
+        }
+        _showLocalNotification(title: title, body: body, payload: type);
       }
     });
 
@@ -175,17 +193,69 @@ class NotificationService {
   static Future<void> refreshAndSaveToken() => saveTokenAfterLogin();
 
   /// À appeler au logout pour stopper les notifications.
+  /// ✅ Ne JAMAIS appeler deleteToken() — cela invalide le token Firebase
+  /// et cause NotRegistered lors du prochain envoi.
   static Future<void> deleteTokenOnLogout() async {
     try {
       final jwt = await _storage.read(key: 'token');
       if (jwt != null) {
-        // Envoyer null au backend → plus de notifications pour ce device
+        // Envoyer token vide → backend fait $unset { fcmToken }
         await ChoristeService().saveFcmToken('');
+        if (kDebugMode) print('[FCM] Token dissocié du compte ✅');
       }
-      await _fcm.deleteToken();
-      if (kDebugMode) print('[FCM] Token supprimé au logout.');
+      // ✅ PAS de _fcm.deleteToken() ici
     } catch (e) {
       if (kDebugMode) print('[FCM] Erreur deleteTokenOnLogout: $e');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // NAVIGATION DEPUIS UNE NOTIFICATION
+  // ─────────────────────────────────────────────────────────────
+
+  @pragma('vm:entry-point')
+  static void handleNotificationTap(String? type) {
+    if (type == null || type.isEmpty) return;
+
+    final navigator = navigatorKey.currentState;
+    if (navigator == null) return;
+
+    if (kDebugMode) print('[FCM] Tap → navigation: $type');
+
+    switch (type) {
+      // ── Répétitions ──
+      case 'new_repetition':
+      case 'repetition_updated':
+      case 'repetition_cancelled':
+      case 'repetition_reminder_2h':
+      case 'repetition_reminder_10min':
+      case 'reminder_day_before':
+      case 'reminder_2h':
+      case 'reminder_10min':
+      case 'choriste_reminder':
+      case 'presence_updated':
+        navigator.pushNamed('/repetitions');
+        break;
+
+      // ── Concerts ──
+      case 'new_concert':
+      case 'concert_updated':
+      case 'concert_cancelled':
+        navigator.pushNamed('/concerts');
+        break;
+
+      // ── Messages chef de pupitre ──
+      case 'chef_message':
+        navigator.pushNamed('/messages');
+        break;
+
+      // ── Validation liste présences ──
+      case 'presence_list_validated':
+        navigator.pushNamed('/repetitions');
+        break;
+
+      default:
+        navigator.pushNamed('/repetitions');
     }
   }
 
@@ -222,38 +292,5 @@ class NotificationService {
       ),
       payload: payload,
     );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // NAVIGATION DEPUIS UNE NOTIFICATION
-  // ─────────────────────────────────────────────────────────────
-
-  @pragma('vm:entry-point')
-  static void handleNotificationTap(String? type) {
-    if (type == null || type.isEmpty) return;
-
-    final nav = navigatorKey.currentState;
-    if (nav == null) return;
-
-    if (kDebugMode) print('[FCM] Navigation → $type');
-
-    switch (type) {
-      case 'new_repetition':
-      case 'repetition_updated':
-      case 'repetition_cancelled':
-      case 'reminder_day_before':
-      case 'reminder_2h':
-      case 'reminder_10min':
-      case 'choriste_reminder':
-        nav.pushNamed('/repetitions');
-        break;
-      case 'new_concert':
-      case 'concert_updated':
-      case 'concert_cancelled':
-        nav.pushNamed('/concerts');
-        break;
-      default:
-        nav.pushNamed('/repetitions');
-    }
   }
 }

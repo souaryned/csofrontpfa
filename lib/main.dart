@@ -1,9 +1,14 @@
+import 'package:cso_mobile/screens/choriste/chef_pupitre_screen.dart';
+import 'package:cso_mobile/screens/choriste/messagerie_chef_screen.dart';
 import 'package:cso_mobile/screens/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/oeuvre_provider.dart';
 import 'services/notification_service.dart';
+
+// Screens existants
 import 'screens/choriste/presences_screen.dart';
 import 'screens/choriste/reminder_preferences_screen.dart';
 
@@ -43,7 +48,10 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider.value(value: authProvider)],
+      providers: [
+        ChangeNotifierProvider.value(value: authProvider),
+        ChangeNotifierProvider(create: (_) => OeuvreProvider()),
+      ],
       child: MaterialApp(
         title: 'CSO Mobile',
         debugShowCheckedModeBanner: false,
@@ -61,6 +69,7 @@ class MyApp extends StatelessWidget {
 
         // Routes nommées pour la navigation depuis les notifications
         routes: {
+          // Répétitions / présences choriste
           '/repetitions': (context) => Scaffold(
             appBar: AppBar(
               title: const Text('Répétitions'),
@@ -69,8 +78,15 @@ class MyApp extends StatelessWidget {
             ),
             body: const PresencesScreen(),
           ),
+
           '/reminder-preferences': (context) =>
               const ReminderPreferencesScreen(),
+
+          // Espace chef de pupitre (présences + messagerie)
+          '/chef-pupitre': (context) => const ChefPupitreScreen(),
+
+          // Messages reçus par le choriste (de son chef de pupitre)
+          '/messages': (context) => const MessagesChoristScreen(),
         },
       ),
     );
