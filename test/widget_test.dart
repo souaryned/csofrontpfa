@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
 import 'package:cso_mobile/main.dart';
 import 'package:cso_mobile/providers/auth_provider.dart';
 

@@ -1,4 +1,4 @@
-package com.PFA.cso_mobile
+package com.example.cso_mobile
 
 import io.flutter.embedding.android.FlutterActivity
 

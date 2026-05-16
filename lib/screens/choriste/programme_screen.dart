@@ -153,7 +153,7 @@ class _ProgrammeScreenState extends State<ProgrammeScreen> {
                         width: double.infinity,
                         height: 200,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildPosterPlaceholder(),
+                        errorBuilder: (_, _, _) => _buildPosterPlaceholder(),
                         loadingBuilder: (context, child, loadingProgress) {
                           if (loadingProgress == null) return child;
                           return _buildPosterLoading();

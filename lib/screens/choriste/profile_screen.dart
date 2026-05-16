@@ -160,7 +160,7 @@ void _loadProfile() {
                   child: Text(user?.role ?? '', style: const TextStyle(color: Colors.white, fontSize: 13)),
                 ),
                 // ── Pupitre + Chef de pupitre ──
-                if ((user?.pupitreLabel as String? ?? '').isNotEmpty) ...[
+                if ((user?.pupitreLabel ?? '').isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -179,7 +179,7 @@ void _loadProfile() {
                             const Icon(Icons.music_note_rounded, size: 13, color: Colors.white),
                             const SizedBox(width: 4),
                             Text(
-                              user?.pupitreLabel as String? ?? '',
+                              user?.pupitreLabel ?? '',
                               style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
                             ),
                           ],

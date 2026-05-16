@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 import 'login_screen.dart';
+import 'home_screen.dart'; // ✅ écran principal de l'app
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -16,53 +19,106 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _scaleAnim;
   late Animation<double> _textFadeAnim;
 
+  // Durée minimale d'affichage du splash (pour laisser l'animation se jouer)
+  static const _minSplashDuration = Duration(milliseconds: 1800);
+
+  bool _animationDone = false;
+  bool _authDone = false;
+
   @override
   void initState() {
     super.initState();
 
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-    ));
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
+    );
 
+    // ── Animations ────────────────────────────────────────────
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     );
 
     _fadeAnim = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: const Interval(0, 0.6, curve: Curves.easeOut)),
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, 0.6, curve: Curves.easeOut),
+      ),
     );
 
     _scaleAnim = Tween<double>(begin: 0.7, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: const Interval(0, 0.6, curve: Curves.easeOutBack)),
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, 0.6, curve: Curves.easeOutBack),
+      ),
     );
 
     _textFadeAnim = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: const Interval(0.5, 1, curve: Curves.easeOut)),
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.5, 1, curve: Curves.easeOut),
+      ),
     );
 
     Future.delayed(const Duration(milliseconds: 300), () {
-      _controller.forward();
+      if (mounted) _controller.forward();
     });
 
-    Future.delayed(const Duration(milliseconds: 2800), () {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const LoginScreen(),
-            transitionDuration: const Duration(milliseconds: 600),
-            transitionsBuilder: (_, animation, __, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-          ),
-        );
+    // ── Durée minimale avant navigation ──────────────────────
+    Future.delayed(_minSplashDuration, () {
+      _animationDone = true;
+      _tryNavigate();
+    });
+
+    // ── Lire AuthProvider après le premier frame ──────────────
+    // loadUser() est déjà appelé dans main() avant runApp(),
+    // donc isInitializing peut déjà être false ici.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = context.read<AuthProvider>();
+      if (!auth.isInitializing) {
+        _authDone = true;
+        _tryNavigate();
+      } else {
+        auth.addListener(_onAuthChanged);
       }
     });
   }
 
+  void _onAuthChanged() {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isInitializing) {
+      auth.removeListener(_onAuthChanged);
+      _authDone = true;
+      _tryNavigate();
+    }
+  }
+
+  // Naviguer seulement quand les DEUX conditions sont remplies :
+  // 1. Durée minimale du splash écoulée
+  // 2. AuthProvider a fini loadUser()
+  void _tryNavigate() {
+    if (!_animationDone || !_authDone) return;
+    if (!mounted) return;
+
+    final isLoggedIn = context.read<AuthProvider>().isLoggedIn;
+
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) =>
+            isLoggedIn ? const HomeScreen() : const LoginScreen(),
+        transitionDuration: const Duration(milliseconds: 500),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    try {
+      context.read<AuthProvider>().removeListener(_onAuthChanged);
+    } catch (_) {}
     _controller.dispose();
     super.dispose();
   }
@@ -73,7 +129,7 @@ class _SplashScreenState extends State<SplashScreen>
       backgroundColor: const Color(0xFFF0F2F5),
       body: Stack(
         children: [
-          // Cercle vert haut droite
+          // Cercle teal haut droite
           Positioned(
             top: -60,
             right: -60,
@@ -112,7 +168,7 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          // Petit cercle vert
+          // Petit cercle teal
           Positioned(
             bottom: 200,
             left: 30,
@@ -125,7 +181,8 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          // Carte centrale
+
+          // ── Carte centrale ─────────────────────────────────
           Center(
             child: FadeTransition(
               opacity: _fadeAnim,
@@ -133,13 +190,16 @@ class _SplashScreenState extends State<SplashScreen>
                 scale: _scaleAnim,
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 40),
-                  padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 32),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 48,
+                    horizontal: 32,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(24),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
+                        color: Colors.black.withOpacity(0.08),
                         blurRadius: 30,
                         offset: const Offset(0, 8),
                       ),
@@ -153,8 +213,22 @@ class _SplashScreenState extends State<SplashScreen>
                         'assets/images/logo.png',
                         height: 100,
                         width: 100,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 100,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2DD4BF).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(
+                            Icons.music_note_rounded,
+                            color: Color(0xFF2DD4BF),
+                            size: 48,
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 24),
+
                       // Ligne décorative
                       Row(
                         children: [
@@ -180,6 +254,7 @@ class _SplashScreenState extends State<SplashScreen>
                         ],
                       ),
                       const SizedBox(height: 20),
+
                       // Titre
                       FadeTransition(
                         opacity: _textFadeAnim,
@@ -208,7 +283,8 @@ class _SplashScreenState extends State<SplashScreen>
                         ),
                       ),
                       const SizedBox(height: 32),
-                      // Loading indicator
+
+                      // Spinner de chargement
                       FadeTransition(
                         opacity: _textFadeAnim,
                         child: const SizedBox(
