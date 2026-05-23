@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../theme/app_colors.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/oeuvre_provider.dart';
 import '../../models/oeuvre_model.dart';
@@ -39,7 +40,7 @@ class _OeuvreListScreenState extends State<OeuvreListScreen> {
     }).toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,

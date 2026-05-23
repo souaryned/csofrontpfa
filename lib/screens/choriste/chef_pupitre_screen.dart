@@ -1,14 +1,12 @@
-// screens/chef_pupitre/chef_pupitre_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/chef_pupitre_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
 import 'presences_chef_screen.dart';
 import 'messagerie_chef_screen.dart';
 
-/// Point d'entrée du module Chef de Pupitre.
-/// Tab 1 : Présences répétition en cours
-/// Tab 2 : Messagerie pupitre
+/// Module Chef de pupitre — présences + messagerie (style dashboard).
 class ChefPupitreScreen extends StatelessWidget {
   const ChefPupitreScreen({super.key});
 
@@ -16,63 +14,62 @@ class ChefPupitreScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = context.read<AuthProvider>().user;
     final pupitre = user?.pupitre ?? '';
-    final color = _pupitreColor(pupitre);
+    final color = AppColors.pupitre(pupitre);
 
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: AppColors.background,
         appBar: AppBar(
-          backgroundColor: color,
-          foregroundColor: Colors.white,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          title: Row(
             children: [
-              const Text('Chef de Pupitre',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              Text(
-                _pupitreLabel(pupitre),
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
-              ),
+              const Text('Chef de pupitre'),
+              if (pupitre.isNotEmpty) ...[
+                const SizedBox(width: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: color.withValues(alpha: 0.2)),
+                  ),
+                  child: Text(
+                    AppColors.pupitreLabel(pupitre),
+                    style: AppTextStyles.label.copyWith(color: color),
+                  ),
+                ),
+              ],
             ],
           ),
-          bottom: TabBar(
-            indicatorColor: Colors.white,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white60,
-            tabs: const [
-              Tab(icon: Icon(Icons.how_to_reg), text: 'Présences'),
-              Tab(icon: Icon(Icons.chat_bubble_outline), text: 'Messages'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(
+                icon: Icon(Icons.how_to_reg_outlined, size: 20),
+                text: 'Présences',
+              ),
+              Tab(
+                icon: Icon(Icons.chat_bubble_outline, size: 20),
+                text: 'Messages',
+              ),
             ],
           ),
         ),
         body: TabBarView(
           children: [
-            PresencesChefScreen(pupitre: pupitre, color: color),
-            MessagerieChefScreen(pupitre: pupitre, color: color),
+            PresencesChefScreen(
+              pupitre: pupitre,
+              color: color,
+              embedded: true,
+            ),
+            MessagerieChefScreen(
+              pupitre: pupitre,
+              color: color,
+              embedded: true,
+            ),
           ],
         ),
       ),
     );
-  }
-
-  Color _pupitreColor(String p) {
-    switch (p) {
-      case 'soprano': return const Color(0xFF7C3AED);
-      case 'alto':    return const Color(0xFF0891B2);
-      case 'ténor':   return const Color(0xFF059669);
-      case 'basse':   return const Color(0xFFB45309);
-      default:        return const Color(0xFF6B7280);
-    }
-  }
-
-  String _pupitreLabel(String p) {
-    switch (p) {
-      case 'soprano': return 'Soprano';
-      case 'alto':    return 'Alto';
-      case 'ténor':   return 'Ténor';
-      case 'basse':   return 'Basse';
-      default:        return p;
-    }
   }
 }

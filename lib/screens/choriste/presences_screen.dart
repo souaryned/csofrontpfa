@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+import '../../widgets/cso_ui.dart';
 
 class PresencesScreen extends StatefulWidget {
   final int initialTab;
@@ -22,6 +25,8 @@ class _PresencesScreenState extends State<PresencesScreen>
   bool _isLoading = true;
   // key = item _id, value = 'present' | 'absent' | 'absent_default' | null
   Map<String, String?> _statusMap = {};
+  bool _historyPresentExpanded = false;
+  bool _historyAbsentExpanded = false;
 
   // ── Repetition split ──
 
@@ -365,19 +370,14 @@ class _PresencesScreenState extends State<PresencesScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return CsoUi.screenBody(
+      child: Column(
       children: [
-        // ── Tab bar ──
         Container(
-          color: Colors.white,
+          color: AppColors.surface,
           child: TabBar(
             controller: _tabController,
-            indicatorColor: const Color(0xFF2DD4BF),
-            indicatorWeight: 3,
-            labelColor: const Color(0xFF2DD4BF),
-            unselectedLabelColor: const Color(0xFF6B7280),
-            labelStyle:
-                const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            indicatorWeight: 2.5,
             tabs: [
               Tab(
                 child: Row(
@@ -406,8 +406,7 @@ class _PresencesScreenState extends State<PresencesScreen>
         // ── Content ──
         Expanded(
           child: _isLoading
-              ? const Center(
-                  child: CircularProgressIndicator(color: Color(0xFF2DD4BF)))
+              ? CsoUi.loading()
               : TabBarView(
                   controller: _tabController,
                   children: [
@@ -417,6 +416,7 @@ class _PresencesScreenState extends State<PresencesScreen>
                 ),
         ),
       ],
+      ),
     );
   }
 
@@ -496,9 +496,9 @@ class _PresencesScreenState extends State<PresencesScreen>
     }
     return RefreshIndicator(
       onRefresh: _loadData,
-      color: const Color(0xFF2DD4BF),
+      color: AppColors.accent,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         itemCount: upcoming.length,
         itemBuilder: (context, index) =>
             _buildRepetitionCard(upcoming[index], isHistory: false),
@@ -508,25 +508,183 @@ class _PresencesScreenState extends State<PresencesScreen>
 
   // ── History tab ──
 
+  bool _isHistoryPresent(dynamic rep) {
+    final id = rep['_id'] as String;
+    return _statusMap[id] == 'present';
+  }
+
+  Widget _buildHistorySectionHeader({
+    required String title,
+    required int count,
+    required IconData icon,
+    required Color color,
+    bool expanded = false,
+    bool collapsible = false,
+    VoidCallback? onToggle,
+  }) {
+    final content = Row(
+      children: [
+        Container(
+          width: 4,
+          height: 20,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            style: AppTextStyles.subtitle.copyWith(fontSize: 15),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            '$count',
+            style: AppTextStyles.label.copyWith(color: color),
+          ),
+        ),
+        if (collapsible) ...[
+          const SizedBox(width: 6),
+          Icon(
+            expanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.keyboard_arrow_down_rounded,
+            color: color,
+            size: 22,
+          ),
+        ],
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, top: 4),
+      child: collapsible
+          ? Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onToggle,
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: content,
+                ),
+              ),
+            )
+          : content,
+    );
+  }
+
+  Widget _buildCollapsibleHistorySection({
+    required String title,
+    required List<dynamic> reps,
+    required IconData icon,
+    required Color color,
+    required bool expanded,
+    required VoidCallback onToggle,
+  }) {
+    if (reps.isEmpty) return const SizedBox.shrink();
+
+    final collapsible = reps.length > 1;
+    final visible = expanded || !collapsible ? reps : reps.take(1).toList();
+    final hidden = reps.length - 1;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildHistorySectionHeader(
+          title: title,
+          count: reps.length,
+          icon: icon,
+          color: color,
+          expanded: expanded,
+          collapsible: collapsible,
+          onToggle: onToggle,
+        ),
+        for (final rep in visible)
+          _buildRepetitionCard(rep, isHistory: true),
+        if (collapsible)
+          Center(
+            child: TextButton.icon(
+              onPressed: onToggle,
+              icon: Icon(
+                expanded
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                size: 20,
+              ),
+              label: Text(
+                expanded
+                    ? 'Réduire'
+                    : 'Voir $hidden autre${hidden > 1 ? 's' : ''}',
+                style: AppTextStyles.label.copyWith(color: color),
+              ),
+              style: TextButton.styleFrom(foregroundColor: color),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildHistoryTab() {
     final history = _historyRepetitions;
     if (history.isEmpty) {
       return _buildEmptyState(
           'Aucun historique disponible', Icons.history_rounded);
     }
+
+    final present =
+        history.where(_isHistoryPresent).toList(growable: false);
+    final absent = history.where((r) => !_isHistoryPresent(r)).toList();
+
+    final children = <Widget>[];
+
+    if (present.isNotEmpty) {
+      children.add(
+        _buildCollapsibleHistorySection(
+          title: 'Présences confirmées',
+          reps: present,
+          icon: Icons.check_circle_outline_rounded,
+          color: AppColors.success,
+          expanded: _historyPresentExpanded,
+          onToggle: () => setState(
+            () => _historyPresentExpanded = !_historyPresentExpanded,
+          ),
+        ),
+      );
+      if (absent.isNotEmpty) {
+        children.add(const SizedBox(height: 20));
+      }
+    }
+
+    if (absent.isNotEmpty) {
+      children.add(
+        _buildCollapsibleHistorySection(
+          title: 'Absences',
+          reps: absent,
+          icon: Icons.cancel_outlined,
+          color: AppColors.error,
+          expanded: _historyAbsentExpanded,
+          onToggle: () =>
+              setState(() => _historyAbsentExpanded = !_historyAbsentExpanded),
+        ),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: _loadData,
-      color: const Color(0xFF2DD4BF),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        // newest first in history
-        itemCount: history.length,
-        itemBuilder: (context, index) {
-          final sorted = [...history]
-            ..sort((a, b) => (_parseDate(b['date']) ?? DateTime(0))
-                .compareTo(_parseDate(a['date']) ?? DateTime(0)));
-          return _buildRepetitionCard(sorted[index], isHistory: true);
-        },
+      color: AppColors.accent,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        children: children,
       ),
     );
   }
@@ -541,228 +699,121 @@ class _PresencesScreenState extends State<PresencesScreen>
     final isToday = date != null && _isSameDay(date, DateTime.now());
     final isLive = isToday && insideWindow && status == null;
 
-    // Couleur selon statut
     Color accentColor;
     switch (status) {
-      case 'present':  accentColor = const Color(0xFF22C55E); break;
-      case 'absent':   accentColor = const Color(0xFFEF4444); break;
-      case 'absent_default': accentColor = const Color(0xFF9CA3AF); break;
-      default: accentColor = isLive ? const Color(0xFF22C55E) : const Color(0xFF2DD4BF);
+      case 'present':
+        accentColor = AppColors.success;
+        break;
+      case 'absent':
+        accentColor = AppColors.error;
+        break;
+      case 'absent_default':
+        accentColor = AppColors.textMuted;
+        break;
+      default:
+        accentColor = isLive ? AppColors.success : AppColors.repAccent;
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isLive
-              ? const Color(0xFF22C55E).withValues(alpha: 0.4)
-              : Colors.transparent,
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: accentColor.withValues(alpha: 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: CsoUi.card(
+        accent: isLive ? AppColors.success : accentColor,
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Header coloré fin ──
-          Container(
-            height: 4,
-            decoration: BoxDecoration(
-              color: accentColor,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            ),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-
-                // ── Ligne titre + badge statut ──
-                Row(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.repAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(
+                  Icons.library_music_outlined,
+                  color: AppColors.repAccent,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(7),
-                      decoration: BoxDecoration(
-                        color: accentColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(Icons.library_music_rounded,
-                          color: accentColor, size: 16),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Label fixe "Répétition"
-                          const Text(
-                            'Répétition',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                              color: Color(0xFF1F2937),
+                    Row(
+                      children: [
+                        Text('Répétition', style: AppTextStyles.subtitle),
+                        if (isToday) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.repAccent,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              "Aujourd'hui",
+                              style: AppTextStyles.label.copyWith(
+                                color: Colors.white,
+                                fontSize: 9,
+                              ),
                             ),
                           ),
-                          // Concert associé
-                          if (rep['concert']?['title'] != null) ...[
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                const Icon(Icons.album_rounded,
-                                    size: 11, color: Color(0xFF94A3B8)),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    rep['concert']['title'],
-                                    style: const TextStyle(
-                                      color: Color(0xFF64748B),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                          if (isToday) ...[
-                            const SizedBox(height: 3),
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF2DD4BF).withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: const Text("Aujourd'hui",
-                                      style: TextStyle(
-                                          color: Color(0xFF2DD4BF),
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600)),
-                                ),
-                                if (isLive) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF22C55E).withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.fiber_manual_record_rounded,
-                                            size: 7, color: Color(0xFF16A34A)),
-                                        SizedBox(width: 3),
-                                        Text('En cours',
-                                            style: TextStyle(
-                                                color: Color(0xFF16A34A),
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w600)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
                         ],
-                      ),
+                      ],
                     ),
-                    // Badge statut — unique, clair
-                    _buildStatusBadge(status, isLive),
+                    if (rep['concert']?['title'] != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        rep['concert']['title'],
+                        style: AppTextStyles.caption,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ],
                 ),
-
-                const SizedBox(height: 12),
-                const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                const SizedBox(height: 10),
-
-                // ── Infos date / heure / lieu ──
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            const Icon(Icons.calendar_today_rounded,
-                                size: 12, color: Color(0xFF94A3B8)),
-                            const SizedBox(width: 6),
-                            Text(_formatDate(rep['date']),
-                                style: const TextStyle(
-                                    color: Color(0xFF475569),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500)),
-                          ]),
-                          if (rep['startTime'] != null) ...[
-                            const SizedBox(height: 5),
-                            Row(children: [
-                              const Icon(Icons.access_time_rounded,
-                                  size: 12, color: Color(0xFF94A3B8)),
-                              const SizedBox(width: 6),
-                              Text(
-                                '${rep['startTime']} – ${rep['endTime'] ?? ''}',
-                                style: const TextStyle(
-                                    color: Color(0xFF475569), fontSize: 12),
-                              ),
-                              // Hint ouverture/fermeture
-                              if (isToday && status == null) ...[
-                                const SizedBox(width: 8),
-                                Text(
-                                  _windowHint(rep),
-                                  style: TextStyle(
-                                    color: insideWindow
-                                        ? const Color(0xFF16A34A)
-                                        : const Color(0xFF9CA3AF),
-                                    fontSize: 11,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ],
-                            ]),
-                          ],
-                          if (rep['location'] != null) ...[
-                            const SizedBox(height: 5),
-                            Row(children: [
-                              const Icon(Icons.location_on_rounded,
-                                  size: 12, color: Color(0xFF94A3B8)),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(rep['location'],
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        color: Color(0xFF475569), fontSize: 12)),
-                              ),
-                            ]),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 14),
-
-                // ── Action area ──
-                _buildRepetitionActions(
-                    id, rep, status, isHistory, isToday, insideWindow),
-              ],
+              ),
+              _buildStatusBadge(status, isLive),
+            ],
+          ),
+          const SizedBox(height: 12),
+          CsoUi.infoRow(
+            Icons.calendar_today_outlined,
+            _formatDate(rep['date']),
+          ),
+          if (rep['startTime'] != null)
+            CsoUi.infoRow(
+              Icons.access_time_outlined,
+              '${rep['startTime']} – ${rep['endTime'] ?? ''}',
             ),
+          if (rep['location'] != null)
+            CsoUi.infoRow(Icons.location_on_outlined, rep['location']),
+          if (isToday && status == null && !insideWindow) ...[
+            const SizedBox(height: 4),
+            Text(
+              _windowHint(rep),
+              style: AppTextStyles.caption.copyWith(
+                fontStyle: FontStyle.italic,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          _buildRepetitionActions(
+            id,
+            rep,
+            status,
+            isHistory,
+            isToday,
+            insideWindow,
           ),
         ],
       ),
@@ -772,31 +823,20 @@ class _PresencesScreenState extends State<PresencesScreen>
   Widget _buildStatusBadge(String? status, bool isLive) {
     switch (status) {
       case 'present':
-        return _badge('✓ Présent', const Color(0xFF16A34A), const Color(0xFFDCFCE7));
+        return CsoUi.statusBadge('Présent', AppColors.success, AppColors.successBg);
       case 'absent':
-        return _badge('✗ Absent', const Color(0xFFDC2626), const Color(0xFFFEE2E2));
+        return CsoUi.statusBadge('Absent', AppColors.error, AppColors.errorBg);
       case 'absent_default':
-        return _badge('✗ Absent', const Color(0xFFDC2626), const Color(0xFFFEE2E2));
+        return CsoUi.statusBadge('Absent', AppColors.error, AppColors.errorBg);
       default:
         return isLive
-            ? _badge('En cours', const Color(0xFF16A34A), const Color(0xFFDCFCE7))
-            : _badge('En attente', const Color(0xFFF59E0B), const Color(0xFFFFFBEB));
+            ? CsoUi.statusBadge('En cours', AppColors.success, AppColors.successBg)
+            : CsoUi.statusBadge(
+                'En attente',
+                AppColors.warning,
+                AppColors.warningBg,
+              );
     }
-  }
-
-  Widget _badge(String label, Color textColor, Color bg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              color: textColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w600)),
-    );
   }
 
   Widget _buildRepetitionActions(
@@ -824,8 +864,8 @@ class _PresencesScreenState extends State<PresencesScreen>
                 icon: const Icon(Icons.edit_rounded, size: 15),
                 label: const Text('Modifier'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF2DD4BF),
-                  side: const BorderSide(color: Color(0xFF2DD4BF)),
+                  foregroundColor: AppColors.accent,
+                  side: const BorderSide(color: AppColors.accent),
                   padding: const EdgeInsets.symmetric(vertical: 11),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8)),
@@ -847,18 +887,22 @@ class _PresencesScreenState extends State<PresencesScreen>
     if (!isToday) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFF6B7280).withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(8),
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border),
         ),
-        child: const Row(
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.lock_clock_rounded, size: 14, color: Color(0xFF9CA3AF)),
-            SizedBox(width: 6),
-            Text('Le pointage s\'ouvrira le jour J',
-                style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 12)),
+            Icon(Icons.lock_clock_outlined,
+                size: 16, color: AppColors.textMuted),
+            const SizedBox(width: 8),
+            Text(
+              'Le pointage s\'ouvrira le jour J',
+              style: AppTextStyles.caption,
+            ),
           ],
         ),
       );
@@ -962,33 +1006,13 @@ class _PresencesScreenState extends State<PresencesScreen>
         children: [
           Icon(Icons.lock_outline_rounded, size: 14, color: color),
           const SizedBox(width: 6),
-          Text(msg, style: TextStyle(color: color, fontSize: 11)),
+          Text(msg, style: AppTextStyles.caption.copyWith(color: color)),
         ],
       ),
     );
   }
 
   Widget _buildEmptyState(String message, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2DD4BF).withValues(alpha: 0.08),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon,
-                size: 40,
-                color: const Color(0xFF2DD4BF).withValues(alpha: 0.4)),
-          ),
-          const SizedBox(height: 12),
-          Text(message,
-              style: const TextStyle(
-                  color: Color(0xFF94A3B8), fontSize: 14)),
-        ],
-      ),
-    );
+    return CsoUi.emptyState(message: message, icon: icon);
   }
 }

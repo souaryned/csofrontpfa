@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.cso_mobile"
+    namespace = "com.PFA.cso_mobile"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.cso_mobile"
+        applicationId = "com.PFA.cso_mobile"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
         versionCode = 1

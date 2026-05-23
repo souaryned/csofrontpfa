@@ -9,7 +9,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../models/survey_model.dart';
+import '../screens/survey_detail_screen.dart';
 import 'choriste_service.dart';
+import 'survey_service.dart';
 
 // ─────────────────────────────────────────────────────────────
 // Handlers top-level obligatoires (isolat background)
@@ -25,7 +28,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 @pragma('vm:entry-point')
 void _localNotifBackgroundHandler(NotificationResponse response) {
-  NotificationService.handleNotificationTap(response.payload);
+  NotificationService.handleNotificationTapFromPayload(response.payload);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -45,6 +48,7 @@ class NotificationService {
       GlobalKey<NavigatorState>();
 
   static bool _initialized = false;
+  static final Set<String> _notifiedSurveyIdsSession = {};
 
   // ─────────────────────────────────────────────────────────────
   // INITIALISATION
@@ -68,26 +72,33 @@ class NotificationService {
         ),
       ),
       onDidReceiveNotificationResponse: (NotificationResponse r) {
-        handleNotificationTap(r.payload);
+        handleNotificationTapFromPayload(r.payload);
       },
       onDidReceiveBackgroundNotificationResponse: _localNotifBackgroundHandler,
     );
 
     // 3. Canal Android haute importance
-    await _localNotif
+    final androidPlugin = _localNotif
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(
-          const AndroidNotificationChannel(
-            'cso_high_importance',
-            'Notifications CSO',
-            description: 'Rappels et alertes du Carthage Symphony Orchestra',
-            importance: Importance.max,
-            playSound: true,
-            enableVibration: true,
-          ),
-        );
+        >();
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'cso_high_importance',
+        'Notifications CSO',
+        description: 'Rappels et alertes du Carthage Symphony Orchestra',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      ),
+    );
+
+    // Permission notifications système (Android 13+)
+    final androidNotifGranted =
+        await androidPlugin?.requestNotificationsPermission();
+    if (kDebugMode) {
+      print('[FCM] Permission Android système: $androidNotifGranted');
+    }
 
     // 4. Permissions FCM
     final settings = await _fcm.requestPermission(
@@ -121,38 +132,24 @@ class NotificationService {
         print('[FCM FG] data: ${message.data}');
       }
 
-      final notif = message.notification;
-      if (notif != null) {
-        // Message avec bloc notification
-        _showLocalNotification(
-          title: notif.title ?? '',
-          body: notif.body ?? '',
-          payload: message.data['type'] ?? '',
-        );
-      } else if (message.data.isNotEmpty) {
-        // Data-only message → construire la notif manuellement
-        final type = message.data['type'] ?? '';
-        String title = 'CSO';
-        String body = 'Vous avez un nouveau message';
-        if (type == 'chef_message') {
-          final sender = message.data['senderName'] ?? 'Votre chef de pupitre';
-          body = message.data['content'] ?? 'Nouveau message de $sender';
-          title = 'Message de $sender';
-        }
-        _showLocalNotification(title: title, body: body, payload: type);
-      }
+      final parsed = _parseNotificationContent(message);
+      _showLocalNotification(
+        title: parsed.title,
+        body: parsed.body,
+        payload: _encodePayload(message.data),
+      );
     });
 
     // Tap sur notif (app en background → foreground)
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      handleNotificationTap(message.data['type']);
+      handleNotificationTap(message.data);
     });
 
     // App fermée → ouverte via tap sur notification
     _fcm.getInitialMessage().then((RemoteMessage? message) {
       if (message != null) {
         Future.delayed(const Duration(milliseconds: 800), () {
-          handleNotificationTap(message.data['type']);
+          handleNotificationTap(message.data);
         });
       }
     });
@@ -183,7 +180,9 @@ class NotificationService {
         return;
       }
       await ChoristeService().saveFcmToken(token);
-      if (kDebugMode) print('[FCM] ✅ Token FCM envoyé.');
+      if (kDebugMode) {
+        print('[FCM] ✅ Token FCM envoyé (${token.substring(0, 20)}…)');
+      }
     } catch (e) {
       if (kDebugMode) print('[FCM] Erreur saveTokenAfterLogin: $e');
     }
@@ -195,6 +194,41 @@ class NotificationService {
   /// À appeler au logout pour stopper les notifications.
   /// ✅ Ne JAMAIS appeler deleteToken() — cela invalide le token Firebase
   /// et cause NotRegistered lors du prochain envoi.
+  /// Alerte locale si de nouveaux sondages en attente (secours si FCM absent).
+  static Future<void> notifyNewPendingSurveys(
+    List<({String id, String titre})> pending,
+  ) async {
+    if (!_initialized || pending.isEmpty) return;
+
+    final fresh = pending
+        .where((s) => !_notifiedSurveyIdsSession.contains(s.id))
+        .toList();
+    if (fresh.isEmpty) return;
+
+    for (final s in fresh) {
+      _notifiedSurveyIdsSession.add(s.id);
+    }
+
+    final title = fresh.length == 1
+        ? 'Nouveau sondage'
+        : '${fresh.length} sondages à répondre';
+    final body = fresh.length == 1
+        ? '« ${fresh.first.titre} » — votre réponse est attendue'
+        : fresh.map((s) => '« ${s.titre} »').take(2).join('\n');
+
+    await _showLocalNotification(
+      title: title,
+      body: body,
+      payload: _encodePayload({
+        'type': 'new_survey',
+        'surveyId': fresh.first.id,
+      }),
+    );
+    if (kDebugMode) {
+      print('[FCM] Alerte locale sondage(s): ${fresh.map((s) => s.titre).join(', ')}');
+    }
+  }
+
   static Future<void> deleteTokenOnLogout() async {
     try {
       final jwt = await _storage.read(key: 'token');
@@ -213,8 +247,64 @@ class NotificationService {
   // NAVIGATION DEPUIS UNE NOTIFICATION
   // ─────────────────────────────────────────────────────────────
 
+  static ({String title, String body}) _parseNotificationContent(
+    RemoteMessage message,
+  ) {
+    final type = message.data['type'] ?? '';
+    final notif = message.notification;
+
+    if (notif != null && notif.title != null && notif.title!.isNotEmpty) {
+      return (
+        title: notif.title!,
+        body: notif.body ?? '',
+      );
+    }
+
+    switch (type) {
+      case 'chef_message':
+        final sender = message.data['senderName'] ?? 'Votre chef de pupitre';
+        return (
+          title: 'Message de $sender',
+          body: message.data['content'] ?? 'Nouveau message de $sender',
+        );
+      case 'new_survey':
+        return (
+          title: 'Nouveau sondage',
+          body: message.data['surveyTitle'] ??
+              'Un sondage vous est destiné — votre réponse est attendue',
+        );
+      default:
+        return (title: 'CSO', body: 'Vous avez une nouvelle notification');
+    }
+  }
+
+  static String _encodePayload(Map<String, dynamic> data) {
+    if (data.isEmpty) return '';
+    return data.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join('&');
+  }
+
+  static Map<String, String> _decodePayload(String? raw) {
+    if (raw == null || raw.isEmpty) return {};
+    if (!raw.contains('=')) return {'type': raw};
+    final map = <String, String>{};
+    for (final part in raw.split('&')) {
+      final idx = part.indexOf('=');
+      if (idx <= 0) continue;
+      map[part.substring(0, idx)] = part.substring(idx + 1);
+    }
+    return map;
+  }
+
   @pragma('vm:entry-point')
-  static void handleNotificationTap(String? type) {
+  static void handleNotificationTapFromPayload(String? payload) {
+    handleNotificationTap(_decodePayload(payload));
+  }
+
+  @pragma('vm:entry-point')
+  static void handleNotificationTap(Map<String, dynamic> data) {
+    final type = data['type']?.toString();
     if (type == null || type.isEmpty) return;
 
     final navigator = navigatorKey.currentState;
@@ -249,6 +339,17 @@ class NotificationService {
         navigator.pushNamed('/messages');
         break;
 
+      // ── Sondages ──
+      case 'new_survey':
+      case 'survey_activated':
+        final surveyId = data['surveyId']?.toString();
+        if (surveyId != null && surveyId.isNotEmpty) {
+          _openSurveyDetail(navigator, surveyId);
+        } else {
+          navigator.pushNamed('/sondages');
+        }
+        break;
+
       // ── Validation liste présences ──
       case 'presence_list_validated':
         navigator.pushNamed('/repetitions');
@@ -256,6 +357,22 @@ class NotificationService {
 
       default:
         navigator.pushNamed('/repetitions');
+    }
+  }
+
+  static Future<void> _openSurveyDetail(
+    NavigatorState navigator,
+    String surveyId,
+  ) async {
+    try {
+      final raw = await SurveyService().getSurveyById(surveyId);
+      final survey = SurveyModel.fromJson(raw);
+      navigator.push(
+        MaterialPageRoute(builder: (_) => SurveyDetailScreen(survey: survey)),
+      );
+    } catch (e) {
+      if (kDebugMode) print('[FCM] Ouverture sondage échouée: $e');
+      navigator.pushNamed('/sondages');
     }
   }
 

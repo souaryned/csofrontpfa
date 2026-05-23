@@ -1,6 +1,7 @@
-import 'package:cso_mobile/screens/choriste/chef_pupitre_screen.dart';
-import 'package:cso_mobile/screens/choriste/messagerie_chef_screen.dart';
-import 'package:cso_mobile/screens/splash_screen.dart';
+import 'package:cso/screens/choriste/chef_pupitre_screen.dart';
+import 'package:cso/screens/choriste/messagerie_chef_screen.dart';
+import 'package:cso/screens/splash_screen.dart';
+import 'package:cso/theme/app_theme.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -9,8 +10,8 @@ import 'providers/oeuvre_provider.dart';
 import 'services/notification_service.dart';
 
 // Screens existants
-import 'screens/choriste/presences_screen.dart';
 import 'screens/choriste/reminder_preferences_screen.dart';
+import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,10 +60,7 @@ class MyApp extends StatelessWidget {
         // Clé de navigation globale pour les notifications
         navigatorKey: NotificationService.navigatorKey,
 
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2DD4BF)),
-          useMaterial3: true,
-        ),
+        theme: AppTheme.light,
 
         // SplashScreen lit AuthProvider et redirige
         home: const SplashScreen(),
@@ -70,14 +68,7 @@ class MyApp extends StatelessWidget {
         // Routes nommées pour la navigation depuis les notifications
         routes: {
           // Répétitions / présences choriste
-          '/repetitions': (context) => Scaffold(
-            appBar: AppBar(
-              title: const Text('Répétitions'),
-              backgroundColor: const Color(0xFF2DD4BF),
-              foregroundColor: Colors.white,
-            ),
-            body: const PresencesScreen(),
-          ),
+          '/repetitions': (context) => const HomeScreen(initialIndex: 1),
 
           '/reminder-preferences': (context) =>
               const ReminderPreferencesScreen(),
@@ -87,6 +78,9 @@ class MyApp extends StatelessWidget {
 
           // Messages reçus par le choriste (de son chef de pupitre)
           '/messages': (context) => const MessagesChoristScreen(),
+
+          // Sondages (index 5 dans HomeScreen)
+          '/sondages': (context) => const HomeScreen(initialIndex: 5),
         },
       ),
     );

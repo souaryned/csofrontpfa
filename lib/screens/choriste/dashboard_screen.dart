@@ -1,11 +1,18 @@
-import 'package:cso_mobile/screens/choriste/messagerie_chef_screen.dart';
-import 'package:cso_mobile/screens/choriste/presences_screen.dart';
-import 'package:cso_mobile/screens/choriste/programme_screen.dart';
+import 'package:cso/screens/choriste/messagerie_chef_screen.dart';
+import 'package:cso/screens/home_screen.dart';
+import 'package:cso/screens/sondages_screen.dart';
+import 'package:cso/screens/survey_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../models/survey_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
 import '../../services/chef_pupitre_service.dart';
+import '../../services/notification_service.dart';
+import '../../services/survey_service.dart';
+import '../../widgets/concert_cards.dart';
+
+part 'dashboard_ui.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -21,11 +28,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final ChoristeService _service = ChoristeService();
   final ChefPupitreService _chefService = ChefPupitreService();
+  final SurveyService _surveyService = SurveyService();
 
-  Map<String, dynamic>? _dashboardData;
+  static const Color _bg = Color(0xFFF7F8FC);
+  static const Color _surface = Colors.white;
+  static const Color _textPrimary = Color(0xFF1A1D26);
+  static const Color _textSecondary = Color(0xFF64748B);
+  static const Color _border = Color(0xFFE8ECF4);
+  static const Color _accent = Color(0xFF4F5D94);
+
   List<dynamic> _allRepetitions = [];
   List<dynamic> _allConcerts = [];
   List<dynamic> _messages = [];
+  List<SurveyModel> _pendingSurveys = [];
   bool _isLoading = true;
 
   /// Map<repId, List<minutesBefore>> — rappels actifs non envoyés
@@ -63,7 +78,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadDashboard() async {
     setState(() => _isLoading = true);
     try {
-      final data = await _service.getChoristeDashboard();
+      await _service.getChoristeDashboard();
       final reps = await _service.getRepetitions();
       final concerts = await _service.getConcerts();
       final reminders = await _service.getAllMyReminders();
@@ -73,17 +88,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
         msgs = await _chefService.getChoristMessages();
       } catch (_) {}
 
+      final pendingSurveys = <SurveyModel>[];
+      try {
+        final raw = await _surveyService.getSurveys();
+        for (final j in raw) {
+          final s = SurveyModel.fromJson(j as Map<String, dynamic>);
+          if (s.statut != 'actif') continue;
+          final rep = await _surveyService.getMaReponse(s.id);
+          if (rep == null) pendingSurveys.add(s);
+        }
+      } catch (_) {}
+
       if (!mounted) return;
       setState(() {
-        _dashboardData = data;
         _allRepetitions = reps;
         _allConcerts = concerts;
         _messages = msgs;
+        _pendingSurveys = pendingSurveys;
         _repReminders
           ..clear()
           ..addAll(reminders);
         _isLoading = false;
       });
+
+      HomeScreen.of(context)?.refreshNotificationBadge();
+      await NotificationService.notifyNewPendingSurveys(
+        pendingSurveys
+            .map((s) => (id: s.id, titre: s.titre))
+            .toList(),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -183,44 +216,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // HELPERS — RÉPÉTITIONS / PRÉSENCES
   // ─────────────────────────────────────────────────────────────
 
-  List<dynamic> get _weekRepetitions {
+  bool _isRepFinished(dynamic r) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-
-    bool isFinished(dynamic r) {
-      final d = _parseDate(r['date']);
-      if (d == null) return false;
-      final day = DateTime(d.year, d.month, d.day);
-      if (day.isBefore(today)) return true;
-      if (_isSameDay(day, today)) {
-        final endTime = r['endTime'] as String?;
-        if (endTime != null) {
-          try {
-            final parts = endTime.split(':').map(int.parse).toList();
-            final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
-            return now.isAfter(end);
-          } catch (_) {}
-        }
+    final d = _parseDate(r['date']);
+    if (d == null) return false;
+    final day = DateTime(d.year, d.month, d.day);
+    if (day.isBefore(today)) return true;
+    if (_isSameDay(day, today)) {
+      final endTime = r['endTime'] as String?;
+      if (endTime != null) {
+        try {
+          final parts = endTime.split(':').map(int.parse).toList();
+          final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
+          return now.isAfter(end);
+        } catch (_) {}
       }
-      return false;
     }
+    return false;
+  }
 
-    final past = _allRepetitions.where(isFinished).toList()
-      ..sort((a, b) {
-        final da = _parseDate(a['date']) ?? DateTime(0);
-        final db = _parseDate(b['date']) ?? DateTime(0);
-        return db.compareTo(da);
-      });
-
-    final upcoming = _allRepetitions.where((r) => !isFinished(r)).toList()
+  List<dynamic> get _upcomingRepetitions {
+    return _allRepetitions.where((r) => !_isRepFinished(r)).toList()
       ..sort((a, b) {
         final da = _parseDate(a['date']) ?? DateTime(2099);
         final db = _parseDate(b['date']) ?? DateTime(2099);
         return da.compareTo(db);
       });
-
-    return [...upcoming.take(2), ...past.take(2)];
   }
+
+  /// Onglet Présences dans HomeScreen (même rendu que le menu latéral).
+  void _openPresencesTab() {
+    final home = HomeScreen.of(context);
+    if (home != null) {
+      home.selectTab(1);
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const HomeScreen(initialIndex: 1),
+      ),
+    );
+  }
+
+  int get _unreadMessagesCount =>
+      _messages.where((m) => m['readAt'] == null).length;
 
   List<dynamic> get _upcomingConcerts {
     final now = DateTime.now();
@@ -934,1057 +975,95 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final user = context.watch<AuthProvider>().user;
     final userId = user?.id ?? '';
     final taux = _tauxPresence(userId);
-    final nextConcert = _upcomingConcerts.isNotEmpty
-        ? _upcomingConcerts.first
-        : null;
-    final weekReps = _weekRepetitions;
+    final pupitreColor = _pupitreColor(user?.pupitre ?? '');
+    final upcomingReps = _upcomingRepetitions.take(4).toList();
+    final upcomingConcerts = _upcomingConcerts.take(3).toList();
 
     return RefreshIndicator(
       onRefresh: _loadDashboard,
-      color: const Color(0xFF2DD4BF),
+      color: _accent,
       child: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF2DD4BF)),
-            )
-          : SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(user),
-                  const SizedBox(height: 20),
-                  _buildPresenceCard(taux, userId),
-                  const SizedBox(height: 14),
-                  if (nextConcert != null) ...[
-                    _buildNextConcertCard(nextConcert, userId),
-                    const SizedBox(height: 20),
-                  ],
-
-                  // Messages non lus
-                  _buildMessagesSectionTitle(user),
-                  const SizedBox(height: 12),
-                  _buildMessagesSection(user),
-                  const SizedBox(height: 20),
-
-                  _buildSectionTitle(
-                    'Répétitions',
-                    Icons.event_note_rounded,
-                    const Color(0xFF2DD4BF),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildWeekRepetitions(weekReps, userId),
-                ],
-              ),
-            ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — HEADER
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildHeader(dynamic user) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF2DD4BF).withOpacity(0.1),
-            blurRadius: 20,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Image.asset(
-              'assets/images/logo.png',
-              width: 44,
-              height: 44,
-              fit: BoxFit.cover,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ShaderMask(
-                shaderCallback: (bounds) => const LinearGradient(
-                  colors: [Color(0xFF2DD4BF), Color(0xFF60A5FA)],
-                ).createShader(bounds),
-                child: const Text(
-                  'CSO',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 5,
-                    height: 1,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 2),
-              const Text(
-                'Carthage Symphony Orchestra',
-                style: TextStyle(
-                  color: Colors.white54,
-                  fontSize: 9,
-                  letterSpacing: 0.6,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — CARTE PRÉSENCE
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildPresenceCard(int taux, String userId) {
-    Color color;
-    String label;
-    IconData icon;
-
-    if (taux >= 80) {
-      color = const Color(0xFF22C55E);
-      label = 'Excellente assiduité';
-      icon = Icons.emoji_events_rounded;
-    } else if (taux >= 60) {
-      color = const Color(0xFFF59E0B);
-      label = 'Assiduité correcte';
-      icon = Icons.trending_up_rounded;
-    } else {
-      color = const Color(0xFFEF4444);
-      label = 'Assiduité insuffisante';
-      icon = Icons.warning_amber_rounded;
-    }
-
-    int total = 0, present = 0;
-    for (final r in _allRepetitions) {
-      final d = _parseDate(r['date']);
-      if (d == null || d.isAfter(DateTime.now())) continue;
-      total++;
-      if (_repStatus(r, userId) == 'present') present++;
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.12),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 72,
-            height: 72,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  value: taux / 100,
-                  strokeWidth: 7,
-                  backgroundColor: color.withOpacity(0.12),
-                  valueColor: AlwaysStoppedAnimation<Color>(color),
-                ),
-                Text(
-                  '$taux%',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 18),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Taux de présence',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF1F2937),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
+          ? const Center(child: CircularProgressIndicator(color: _accent))
+          : Container(
+              color: _bg,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(icon, size: 14, color: color),
-                    const SizedBox(width: 4),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: color,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    _buildLogoBanner(),
+                    const SizedBox(height: 18),
+                    _buildQuickStats(
+                      taux: taux,
+                      unread: _unreadMessagesCount,
+                      surveys: _pendingSurveys.length,
+                      concerts: upcomingConcerts.length,
+                      reps: upcomingReps.length,
+                      pupitreColor: pupitreColor,
                     ),
+                    if (_pendingSurveys.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      _buildSectionHeader(
+                        'Sondages à répondre',
+                        Icons.poll_outlined,
+                        const Color(0xFF0D9488),
+                        badge: _pendingSurveys.length,
+                      ),
+                      const SizedBox(height: 10),
+                      _buildSurveysSection(pupitreColor),
+                    ],
+                    if (_unreadMessagesCount > 0) ...[
+                      const SizedBox(height: 24),
+                      _buildSectionHeader(
+                        'Messages non lus',
+                        Icons.mark_chat_unread_outlined,
+                        const Color(0xFF7C3AED),
+                        badge: _unreadMessagesCount,
+                      ),
+                      const SizedBox(height: 10),
+                      _buildMessagesSection(user, pupitreColor),
+                    ],
+                    if (_pendingSurveys.isEmpty &&
+                        _unreadMessagesCount == 0) ...[
+                      const SizedBox(height: 24),
+                      _buildAllClearBanner(),
+                    ],
+                    if (upcomingReps.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      _buildSectionHeader(
+                        'Répétitions à venir',
+                        Icons.event_note_outlined,
+                        const Color(0xFFD97706),
+                        badge: upcomingReps.length,
+                      ),
+                      const SizedBox(height: 10),
+                      _buildRepetitionsSection(upcomingReps, userId),
+                    ],
+                    if (upcomingConcerts.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      _buildSectionHeader(
+                        'Concerts à venir',
+                        Icons.music_note_outlined,
+                        const Color(0xFFBE185D),
+                        badge: upcomingConcerts.length,
+                      ),
+                      const SizedBox(height: 10),
+                      _buildConcertsSection(upcomingConcerts, userId),
+                    ],
+                    const SizedBox(height: 24),
+                    _buildSectionHeader(
+                      'Présence',
+                      Icons.verified_outlined,
+                      pupitreColor,
+                    ),
+                    const SizedBox(height: 10),
+                    _buildPresenceCard(taux, userId, pupitreColor),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  '$present répétition${present > 1 ? 's' : ''} sur $total '
-                  'assistée${present > 1 ? 's' : ''}',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — SECTION MESSAGES
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildMessagesSectionTitle(dynamic user) {
-    final pColor = _pupitreColor(user?.pupitre ?? '');
-    final unreadCount = _messages.where((m) => m['readAt'] == null).length;
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: pColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(Icons.mark_chat_read_rounded, size: 15, color: pColor),
-        ),
-        const SizedBox(width: 10),
-        const Text(
-          'Messages non lus',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF1F2937),
-          ),
-        ),
-        if (unreadCount > 0) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: pColor,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              '$unreadCount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildMessagesSection(dynamic user) {
-    final pupitre = user?.pupitre as String? ?? '';
-    final pColor = _pupitreColor(pupitre);
-    final unreadMessages = _messages.where((m) => m['readAt'] == null).toList();
-
-    if (unreadMessages.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                Icons.mark_chat_read_rounded,
-                color: Color(0xFFCBD5E1),
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 14),
-            const Text(
-              'Pas de messages pour le moment',
-              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final toShow = unreadMessages.take(3).toList();
-    return Column(
-      children: [
-        ...toShow.map((msg) {
-          final sender = msg['senderId'] as Map?;
-          final isRead = msg['readAt'] != null;
-          return GestureDetector(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const MessagesChoristScreen()),
-            ).then((_) => _loadDashboard()),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: isRead
-                      ? const Color(0xFFE2E8F0)
-                      : pColor.withOpacity(0.35),
-                  width: isRead ? 1 : 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: pColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Center(
-                      child: Text(
-                        sender != null
-                            ? '${sender['firstName']?[0] ?? '?'}'
-                            : '?',
-                        style: TextStyle(
-                          color: pColor,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.star_rounded,
-                              size: 11,
-                              color: Color(0xFFD97706),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${sender?['firstName'] ?? ''} ${sender?['lastName'] ?? ''} · Chef',
-                              style: const TextStyle(
-                                color: Color(0xFFD97706),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          msg['content'] ?? '',
-                          style: TextStyle(
-                            color: isRead
-                                ? const Color(0xFF64748B)
-                                : const Color(0xFF1E293B),
-                            fontSize: 13,
-                            fontWeight: isRead
-                                ? FontWeight.w400
-                                : FontWeight.w600,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        _formatMsgDate(msg['createdAt']),
-                        style: const TextStyle(
-                          color: Color(0xFFCBD5E1),
-                          fontSize: 10,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      if (!isRead)
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: pColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-        if (unreadMessages.length > 3)
-          GestureDetector(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const MessagesChoristScreen()),
-            ).then((_) => _loadDashboard()),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 11),
-              decoration: BoxDecoration(
-                color: pColor.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: pColor.withOpacity(0.2)),
-              ),
-              child: Center(
-                child: Text(
-                  'Voir tous les messages (${_messages.length})',
-                  style: TextStyle(
-                    color: pColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — CARTE PROCHAIN CONCERT
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildNextConcertCard(dynamic concert, String userId) {
-    final d = _parseDate(concert['dateHeure']);
-    final daysLeft = d?.difference(DateTime.now()).inDays;
-
-    final dispo =
-        (concert['availableChoristes'] as List?)?.any(
-          (c) => (c['_id'] ?? c) == userId,
-        ) ??
-        false;
-    final indispo =
-        (concert['absentChoristes'] as List?)?.any(
-          (a) => (a['choriste']?['_id'] ?? a) == userId,
-        ) ??
-        false;
-
-    String statusLabel = 'À confirmer';
-    Color statusColor = const Color(0xFFF59E0B);
-    Color statusBg = const Color(0xFFFFFBEB);
-
-    if (dispo) {
-      statusLabel = '✓ Disponible';
-      statusColor = const Color(0xFF16A34A);
-      statusBg = const Color(0xFFDCFCE7);
-    }
-    if (indispo) {
-      statusLabel = '✗ Indisponible';
-      statusColor = const Color(0xFFDC2626);
-      statusBg = const Color(0xFFFEE2E2);
-    }
-
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => Scaffold(
-            backgroundColor: const Color(0xFFF8FAFC),
-            appBar: AppBar(
-              title: const Text(
-                'Programme de la saison',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-              backgroundColor: Colors.white,
-              elevation: 0,
-              scrolledUnderElevation: 1,
-              shadowColor: Colors.black12,
-              surfaceTintColor: Colors.white,
-              iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
-            ),
-            body: const ProgrammeScreen(),
-          ),
-        ),
-      ),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF1E1B4B), Color(0xFF312E81)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF8B5CF6).withOpacity(0.25),
-              blurRadius: 20,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    daysLeft != null ? 'J-$daysLeft' : '—',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      height: 1,
-                    ),
-                  ),
-                  const Text(
-                    'jours',
-                    style: TextStyle(color: Colors.white54, fontSize: 9),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Prochain concert',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    concert['title'] ?? 'Concert',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.calendar_today_rounded,
-                        size: 11,
-                        color: Colors.white38,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatDate(concert['dateHeure']),
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (concert['location'] != null) ...[
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.location_on_rounded,
-                          size: 11,
-                          color: Colors.white38,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            concert['location'],
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: statusBg,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                statusLabel,
-                style: TextStyle(
-                  color: statusColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — SECTION TITLE
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildSectionTitle(String title, IconData icon, Color color) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(icon, size: 15, color: color),
-        ),
-        const SizedBox(width: 10),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF1F2937),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — LISTE DES RÉPÉTITIONS
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildWeekRepetitions(List<dynamic> reps, String userId) {
-    if (reps.isEmpty) {
-      return _buildEmptyCard(
-        'Aucune répétition cette semaine',
-        Icons.event_note_rounded,
-        const Color(0xFF2DD4BF),
-      );
-    }
-
-    return Column(
-      children: reps.map((rep) {
-        final d = _parseDate(rep['date']);
-        final now = DateTime.now();
-        final isToday = d != null && _isSameDay(d, now);
-
-        bool isPast = d != null && !isToday && d.isBefore(now);
-        if (!isPast && isToday && d != null) {
-          final endTime = rep['endTime'] as String?;
-          if (endTime != null) {
-            final parts = endTime.split(':').map(int.parse).toList();
-            final end = DateTime(d.year, d.month, d.day, parts[0], parts[1]);
-            if (now.isAfter(end)) isPast = true;
-          }
-        }
-
-        final Color accentColor = isPast
-            ? const Color(0xFF9CA3AF)
-            : const Color(0xFFF59E0B);
-        final String statusLabel = isPast ? 'Passée' : 'À venir';
-        final Color statusBg = isPast
-            ? const Color(0xFFF1F5F9)
-            : const Color(0xFFFFFBEB);
-
-        final repId = rep['_id'].toString();
-        final reminders = _getReminders(repId);
-        final hasReminders = reminders.isNotEmpty;
-
-        return GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => Scaffold(
-                backgroundColor: const Color(0xFFF8FAFC),
-                appBar: AppBar(
-                  title: const Text(
-                    'Gérer les présences',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                  backgroundColor: Colors.white,
-                  elevation: 0,
-                  scrolledUnderElevation: 1,
-                  shadowColor: Colors.black12,
-                  surfaceTintColor: Colors.white,
-                  iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
-                ),
-                body: PresencesScreen(initialTab: isPast ? 1 : 0),
-              ),
-            ),
-          ),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: isPast ? const Color(0xFFFAFAFA) : Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: isToday
-                  ? Border.all(
-                      color: const Color(0xFF2DD4BF).withOpacity(0.4),
-                      width: 1.5,
-                    )
-                  : isPast
-                  ? Border.all(color: const Color(0xFFE5E7EB))
-                  : null,
-              boxShadow: isPast
-                  ? []
-                  : [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-            ),
-            child: Row(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2DD4BF).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(
-                        Icons.library_music_rounded,
-                        color: Color(0xFF2DD4BF),
-                        size: 20,
-                      ),
-                    ),
-                    if (isToday)
-                      Positioned(
-                        top: -6,
-                        right: -6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2DD4BF),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text(
-                            'Auj.',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 7,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Répétition',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                          color: Color(0xFF1F2937),
-                        ),
-                      ),
-                      if (rep['concert']?['title'] != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          rep['concert']['title'],
-                          style: const TextStyle(
-                            color: Color(0xFF64748B),
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 5),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 3,
-                        children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.calendar_today_rounded,
-                                size: 11,
-                                color: Color(0xFF94A3B8),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _formatDate(rep['date']),
-                                style: const TextStyle(
-                                  color: Color(0xFF64748B),
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.access_time_rounded,
-                                size: 11,
-                                color: Color(0xFF94A3B8),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${rep['startTime']} – ${rep['endTime']}',
-                                style: const TextStyle(
-                                  color: Color(0xFF64748B),
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      if (rep['location'] != null) ...[
-                        const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.location_on_rounded,
-                              size: 11,
-                              color: Color(0xFF94A3B8),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                rep['location'],
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF64748B),
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                      if (!isPast && hasReminders) ...[
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 5,
-                          runSpacing: 4,
-                          children: reminders
-                              .map((min) => _inlineReminderBadge(min))
-                              .toList(),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusBg,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        statusLabel,
-                        style: TextStyle(
-                          color: accentColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    if (!isPast) ...[
-                      const SizedBox(height: 6),
-                      GestureDetector(
-                        onTap: () => _showReminderSheet(context, rep),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: hasReminders
-                                    ? const Color(0xFF2DD4BF).withOpacity(0.12)
-                                    : Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Icon(
-                                hasReminders
-                                    ? Icons.notifications_active_rounded
-                                    : Icons.notifications_none_rounded,
-                                size: 16,
-                                color: hasReminders
-                                    ? const Color(0xFF2DD4BF)
-                                    : Colors.grey.shade400,
-                              ),
-                            ),
-                            if (reminders.length > 1)
-                              Positioned(
-                                top: -4,
-                                right: -4,
-                                child: Container(
-                                  width: 15,
-                                  height: 15,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF2DD4BF),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      '${reminders.length}',
-                                      style: const TextStyle(
-                                        fontSize: 8,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(width: 4),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  size: 16,
-                  color: Color(0xFFCBD5E1),
-                ),
-              ],
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // WIDGETS — EMPTY CARD
-  // ─────────────────────────────────────────────────────────────
-
-  Widget _buildEmptyCard(String message, IconData icon, Color color) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 28),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
-        ],
-      ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.08),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 26, color: color.withOpacity(0.4)),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            message,
-            style: TextStyle(color: Colors.grey[400], fontSize: 13),
-          ),
-        ],
-      ),
-    );
-  }
 }

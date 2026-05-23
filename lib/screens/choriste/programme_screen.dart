@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
-import '../../config/api_config.dart';
 import '../../services/choriste_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+import '../../widgets/concert_cards.dart';
+import '../../widgets/cso_ui.dart';
+
+enum _ProgrammeFilter { all, upcoming, past }
 
 class ProgrammeScreen extends StatefulWidget {
   const ProgrammeScreen({super.key});
@@ -11,8 +16,11 @@ class ProgrammeScreen extends StatefulWidget {
 
 class _ProgrammeScreenState extends State<ProgrammeScreen> {
   final ChoristeService _service = ChoristeService();
-  List<dynamic> _concerts = [];
+
+  List<dynamic> _upcoming = [];
+  List<dynamic> _past = [];
   bool _isLoading = true;
+  _ProgrammeFilter _filter = _ProgrammeFilter.all;
 
   @override
   void initState() {
@@ -21,313 +29,342 @@ class _ProgrammeScreenState extends State<ProgrammeScreen> {
   }
 
   Future<void> _loadData() async {
+    setState(() => _isLoading = true);
     try {
       final concerts = await _service.getConcerts();
       final now = DateTime.now();
 
-      // Séparer à venir et passés
       final upcoming = concerts.where((c) {
-        try { return DateTime.parse(c['dateHeure']).isAfter(now); } catch (_) { return false; }
+        try {
+          return DateTime.parse(c['dateHeure']).isAfter(now);
+        } catch (_) {
+          return false;
+        }
       }).toList()
         ..sort((a, b) {
           final da = DateTime.tryParse(a['dateHeure'] ?? '') ?? DateTime(2099);
           final db = DateTime.tryParse(b['dateHeure'] ?? '') ?? DateTime(2099);
-          return da.compareTo(db); // plus proche en premier
+          return da.compareTo(db);
         });
 
       final past = concerts.where((c) {
-        try { return !DateTime.parse(c['dateHeure']).isAfter(now); } catch (_) { return true; }
+        try {
+          return !DateTime.parse(c['dateHeure']).isAfter(now);
+        } catch (_) {
+          return true;
+        }
       }).toList()
         ..sort((a, b) {
           final da = DateTime.tryParse(a['dateHeure'] ?? '') ?? DateTime(0);
           final db = DateTime.tryParse(b['dateHeure'] ?? '') ?? DateTime(0);
-          return db.compareTo(da); // plus récent en premier
+          return db.compareTo(da);
         });
 
+      if (!mounted) return;
       setState(() {
-        _concerts = [...upcoming, ...past];
+        _upcoming = upcoming;
+        _past = past;
         _isLoading = false;
       });
-    } catch (e) {
+    } catch (_) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
     }
   }
 
-  String _formatDate(String? rawDate) {
-    if (rawDate == null || rawDate.isEmpty) return '';
-    try {
-      final date = DateTime.parse(rawDate);
-      const months = [
-        '', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
-        'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
-      ];
-      const days = [
-        '', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'
-      ];
-      final hour = date.hour.toString().padLeft(2, '0');
-      final min = date.minute.toString().padLeft(2, '0');
-      return '${days[date.weekday]} ${date.day} ${months[date.month]} ${date.year} à $hour:$min';
-    } catch (e) {
-      return rawDate;
-    }
+  List<dynamic> get _visibleUpcoming {
+    if (_filter == _ProgrammeFilter.past) return [];
+    return _upcoming;
   }
 
-  bool _isPast(String? rawDate) {
-    if (rawDate == null) return false;
-    try {
-      return DateTime.parse(rawDate).isBefore(DateTime.now());
-    } catch (_) {
-      return false;
-    }
+  List<dynamic> get _visiblePast {
+    if (_filter == _ProgrammeFilter.upcoming) return [];
+    return _past;
   }
 
-  String _buildPosterUrl(String? poster) {
-    if (poster == null || poster.trim().isEmpty) return '';
-    // Si c'est déjà une URL complète
-    if (poster.startsWith('http://') || poster.startsWith('https://')) {
-      return poster;
-    }
-    // Si c'est un chemin relatif commençant par /uploads
-    if (poster.startsWith('/uploads')) {
-      return '${ApiConfig.baseUrl}$poster';
-    }
-    // Si c'est juste un nom de fichier
-    if (poster.contains('.')) {
-      return '${ApiConfig.baseUrl}/uploads/posters/$poster';
-    }
-    // Champ présent mais invalide → pas d'image
-    return '';
-  }
+  bool get _isEmpty =>
+      _visibleUpcoming.isEmpty && _visiblePast.isEmpty && !_isLoading;
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _loadData,
-      color: const Color(0xFF2DD4BF),
-      child: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF2DD4BF)))
-          : _concerts.isEmpty
-              ? _buildEmptyState()
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _concerts.length,
-                  itemBuilder: (context, index) {
-                    return _buildConcertCard(_concerts[index]);
-                  },
-                ),
-    );
-  }
-
-  Widget _buildConcertCard(dynamic concert) {
-    final String? poster = concert['poster'];
-    final String posterUrl = _buildPosterUrl(poster);
-    final bool hasPoster = posterUrl.isNotEmpty;
-    final bool isPast = _isPast(concert['dateHeure']);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Poster ──
-          ClipRRect(
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(16)),
-            child: Stack(
-              children: [
-                hasPoster
-                    ? Image.network(
-                        posterUrl,
-                        width: double.infinity,
-                        height: 200,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => _buildPosterPlaceholder(),
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return _buildPosterLoading();
-                        },
-                      )
-                    : _buildPosterPlaceholder(),
-                // Badge passé / à venir
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: isPast
-                          ? Colors.black.withValues(alpha: 0.6)
-                          : const Color(0xFF2DD4BF),
-                      borderRadius: BorderRadius.circular(20),
+    return CsoUi.screenBody(
+      child: RefreshIndicator(
+        onRefresh: _loadData,
+        color: AppColors.concertAccent,
+        child: _isLoading
+            ? _buildLoadingSkeleton()
+            : _isEmpty
+                ? _buildEmptyState()
+                : CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
                     ),
-                    child: Text(
-                      isPast ? 'Passé' : 'À venir',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // ── Infos ──
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  concert['title'] ?? 'Concert',
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF1F2937),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    const Icon(Icons.calendar_today_rounded,
-                        size: 14, color: Color(0xFF3B82F6)),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        _formatDate(concert['dateHeure']),
-                        style: const TextStyle(
-                          color: Color(0xFF6B7280),
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (concert['location'] != null &&
-                    concert['location'].toString().isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      const Icon(Icons.location_on_rounded,
-                          size: 14, color: Color(0xFF9B8EC4)),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          concert['location'],
-                          style: const TextStyle(
-                            color: Color(0xFF6B7280),
-                            fontSize: 13,
+                    slivers: [
+                      SliverToBoxAdapter(child: _buildHeader()),
+                      SliverToBoxAdapter(child: _buildFilterChips()),
+                      if (_filter != _ProgrammeFilter.past &&
+                          _visibleUpcoming.isNotEmpty) ...[
+                        SliverToBoxAdapter(
+                          child: _buildSectionLabel(
+                            'Prochain concert',
+                            Icons.star_rounded,
+                            AppColors.concertAccent,
                           ),
                         ),
-                      ),
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                            child: ConcertFeaturedCard(
+                              concert: _visibleUpcoming.first,
+                            ),
+                          ),
+                        ),
+                        if (_visibleUpcoming.length > 1) ...[
+                          SliverToBoxAdapter(
+                            child: _buildSectionLabel(
+                              'Autres concerts à venir',
+                              Icons.event_rounded,
+                              AppColors.concertAccent,
+                            ),
+                          ),
+                          SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                return Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    0,
+                                    20,
+                                    10,
+                                  ),
+                                  child: ConcertCompactCard(
+                                    concert: _visibleUpcoming[index + 1],
+                                  ),
+                                );
+                              },
+                              childCount: _visibleUpcoming.length - 1,
+                            ),
+                          ),
+                        ],
+                      ],
+                      if (_visiblePast.isNotEmpty) ...[
+                        SliverToBoxAdapter(
+                          child: _buildSectionLabel(
+                            'Concerts passés',
+                            Icons.history_rounded,
+                            AppColors.textMuted,
+                          ),
+                        ),
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              return Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  20,
+                                  10,
+                                ),
+                                child: ConcertCompactCard(
+                                  concert: _visiblePast[index],
+                                  isPast: true,
+                                ),
+                              );
+                            },
+                            childCount: _visiblePast.length,
+                          ),
+                        ),
+                      ],
+                      const SliverToBoxAdapter(child: SizedBox(height: 24)),
                     ],
                   ),
-                ],
-              ],
-            ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    final total = _upcoming.length + _past.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF831843), Color(0xFFBE185D)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.concertAccent.withValues(alpha: 0.35),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.theater_comedy_rounded,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Programme de la saison',
+                    style: AppTextStyles.title.copyWith(
+                      color: Colors.white,
+                      fontSize: 18,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    total == 0
+                        ? 'Aucun concert enregistré'
+                        : '$total concert${total > 1 ? 's' : ''} · ${_upcoming.length} à venir',
+                    style: AppTextStyles.body.copyWith(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterChips() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Row(
+        children: [
+          _filterChip('Tous', _ProgrammeFilter.all),
+          const SizedBox(width: 8),
+          _filterChip('À venir', _ProgrammeFilter.upcoming),
+          const SizedBox(width: 8),
+          _filterChip('Passés', _ProgrammeFilter.past),
         ],
       ),
     );
   }
 
-  Widget _buildPosterLoading() {
-    return Container(
-      width: double.infinity,
-      height: 200,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF2DD4BF),
-          strokeWidth: 2,
+  Widget _filterChip(String label, _ProgrammeFilter value) {
+    final selected = _filter == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _filter = value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.concertAccent : AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? AppColors.concertAccent : AppColors.border,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.concertAccent.withValues(alpha: 0.25),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: AppTextStyles.label.copyWith(
+              fontSize: 12,
+              color: selected ? Colors.white : AppColors.textSecondary,
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildPosterPlaceholder() {
-    return Container(
-      width: double.infinity,
-      height: 200,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildSectionLabel(String title, IconData icon, Color color) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+      child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            width: 4,
+            height: 18,
             decoration: BoxDecoration(
-              color: const Color(0xFF2DD4BF).withValues(alpha: 0.15),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.celebration_rounded,
-              color: Color(0xFF2DD4BF),
-              size: 36,
+              color: color,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(width: 10),
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
           Text(
-            'Affiche non disponible',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 12,
-            ),
+            title,
+            style: AppTextStyles.subtitle.copyWith(fontSize: 15),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildLoadingSkeleton() {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Container(
+          height: 88,
+          decoration: BoxDecoration(
+            color: AppColors.border,
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
+        const SizedBox(height: 16),
+        ...List.generate(
+          3,
+          (_) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Container(
+              height: 100,
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2DD4BF).withValues(alpha: 0.08),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.celebration_rounded,
-              size: 40,
-              color: const Color(0xFF2DD4BF).withValues(alpha: 0.4),
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Aucun concert programmé',
-            style: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
-          ),
-        ],
-      ),
+    final message = switch (_filter) {
+      _ProgrammeFilter.upcoming => 'Aucun concert à venir pour le moment',
+      _ProgrammeFilter.past => 'Aucun concert passé enregistré',
+      _ => 'Aucun concert programmé',
+    };
+    return CsoUi.emptyState(
+      message: message,
+      icon: Icons.celebration_rounded,
+      iconColor: AppColors.concertAccent,
     );
   }
 }

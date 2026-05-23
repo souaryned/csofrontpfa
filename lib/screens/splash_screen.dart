@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import 'login_screen.dart';
-import 'home_screen.dart'; // ✅ écran principal de l'app
+import 'home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -19,11 +19,11 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _scaleAnim;
   late Animation<double> _textFadeAnim;
 
-  // Durée minimale d'affichage du splash (pour laisser l'animation se jouer)
-  static const _minSplashDuration = Duration(milliseconds: 1800);
+  static const _minSplashDuration = Duration(milliseconds: 4000);
 
   bool _animationDone = false;
   bool _authDone = false;
+  bool _navigated = false;
 
   @override
   void initState() {
@@ -33,7 +33,6 @@ class _SplashScreenState extends State<SplashScreen>
       const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
     );
 
-    // ── Animations ────────────────────────────────────────────
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
@@ -64,16 +63,16 @@ class _SplashScreenState extends State<SplashScreen>
       if (mounted) _controller.forward();
     });
 
-    // ── Durée minimale avant navigation ──────────────────────
+    // Durée minimale du splash
     Future.delayed(_minSplashDuration, () {
+      if (!mounted) return;
       _animationDone = true;
       _tryNavigate();
     });
 
-    // ── Lire AuthProvider après le premier frame ──────────────
-    // loadUser() est déjà appelé dans main() avant runApp(),
-    // donc isInitializing peut déjà être false ici.
+    // Écouter AuthProvider
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final auth = context.read<AuthProvider>();
       if (!auth.isInitializing) {
         _authDone = true;
@@ -85,6 +84,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _onAuthChanged() {
+    if (!mounted) return;
     final auth = context.read<AuthProvider>();
     if (!auth.isInitializing) {
       auth.removeListener(_onAuthChanged);
@@ -93,12 +93,10 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
-  // Naviguer seulement quand les DEUX conditions sont remplies :
-  // 1. Durée minimale du splash écoulée
-  // 2. AuthProvider a fini loadUser()
   void _tryNavigate() {
     if (!_animationDone || !_authDone) return;
-    if (!mounted) return;
+    if (!mounted || _navigated) return;
+    _navigated = true;
 
     final isLoggedIn = context.read<AuthProvider>().isLoggedIn;
 
@@ -107,7 +105,7 @@ class _SplashScreenState extends State<SplashScreen>
       PageRouteBuilder(
         pageBuilder: (_, __, ___) =>
             isLoggedIn ? const HomeScreen() : const LoginScreen(),
-        transitionDuration: const Duration(milliseconds: 500),
+transitionDuration: const Duration(milliseconds: 500),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
@@ -182,7 +180,7 @@ class _SplashScreenState extends State<SplashScreen>
             ),
           ),
 
-          // ── Carte centrale ─────────────────────────────────
+          // Carte centrale
           Center(
             child: FadeTransition(
               opacity: _fadeAnim,
@@ -255,7 +253,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                       const SizedBox(height: 20),
 
-                      // Titre
+                      // Titre CSO
                       FadeTransition(
                         opacity: _textFadeAnim,
                         child: const Text(
@@ -284,7 +282,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                       const SizedBox(height: 32),
 
-                      // Spinner de chargement
+                      // Spinner
                       FadeTransition(
                         opacity: _textFadeAnim,
                         child: const SizedBox(

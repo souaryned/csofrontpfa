@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../widgets/avatar_widget.dart'; // ✅ IMPORT
+import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+import '../../widgets/avatar_widget.dart';
+import '../../widgets/cso_ui.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -98,22 +101,15 @@ void _loadProfile() {
         ? '${ApiConfig.baseUrl}${user!.avatar}'
         : null;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return CsoUi.screenBody(
+      child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       child: Column(
         children: [
-          const SizedBox(height: 8),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2DD4BF), Color(0xFF3B82F6)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
+            decoration: CsoUi.card(accent: AppColors.accent),
             child: Column(
               children: [
                 GestureDetector(
@@ -131,33 +127,51 @@ void _loadProfile() {
                               avatarUrl: avatarUrl,
                               fullName: user?.fullName,
                               radius: 45,
-                              backgroundColor: Colors.white30,
-                              textColor: Colors.white,
+                              backgroundColor:
+                                  AppColors.accent.withValues(alpha: 0.12),
+                              textColor: AppColors.accent,
                             ),
                       Positioned(
                         bottom: 0,
                         right: 0,
                         child: Container(
                           padding: const EdgeInsets.all(6),
-                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                          child: const Icon(Icons.camera_alt, size: 16, color: Color(0xFF2DD4BF)),
+                          decoration: const BoxDecoration(
+                            color: AppColors.surface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt_outlined,
+                            size: 16,
+                            color: AppColors.accent,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text('Cliquez pour changer la photo', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Text(
+                  'Cliquez pour changer la photo',
+                  style: AppTextStyles.caption,
+                ),
                 const SizedBox(height: 8),
-                Text(user?.fullName ?? '', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(user?.fullName ?? '', style: AppTextStyles.title),
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
+                    color: AppColors.accent.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: AppColors.accent.withValues(alpha: 0.2),
+                    ),
                   ),
-                  child: Text(user?.role ?? '', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                  child: Text(
+                    user?.role ?? '',
+                    style: AppTextStyles.label.copyWith(color: AppColors.accent),
+                  ),
                 ),
                 // ── Pupitre + Chef de pupitre ──
                 if ((user?.pupitreLabel ?? '').isNotEmpty) ...[
@@ -169,18 +183,20 @@ void _loadProfile() {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
+                          color: AppColors.background,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                          border: Border.all(color: AppColors.border),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.music_note_rounded, size: 13, color: Colors.white),
+                            const Icon(Icons.music_note_outlined,
+                                size: 13, color: AppColors.accent),
                             const SizedBox(width: 4),
                             Text(
                               user?.pupitreLabel ?? '',
-                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                              style: AppTextStyles.label
+                                  .copyWith(color: AppColors.accent),
                             ),
                           ],
                         ),
@@ -212,7 +228,7 @@ void _loadProfile() {
           const SizedBox(height: 24),
           const Align(
             alignment: Alignment.centerLeft,
-            child: Text('Modifier mes informations', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            child: Text('Modifier mes informations', style: AppTextStyles.subtitle),
           ),
           const SizedBox(height: 16),
           Row(
@@ -234,7 +250,7 @@ void _loadProfile() {
                   : const Icon(Icons.save),
               label: Text(_isLoading ? 'Sauvegarde...' : 'Sauvegarder'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2DD4BF),
+                backgroundColor: AppColors.accent,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -243,6 +259,7 @@ void _loadProfile() {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -258,12 +275,21 @@ void _loadProfile() {
       keyboardType: keyboardType,
       decoration: InputDecoration(
         labelText: label,
-        prefixIcon: Icon(icon, color: const Color(0xFF2DD4BF)),
+        prefixIcon: Icon(icon, color: AppColors.accent),
         filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF2DD4BF))),
+        fillColor: AppColors.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.accent, width: 1.5),
+        ),
       ),
     );
   }

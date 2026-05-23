@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:cso_mobile/services/notification_service.dart';
+import 'package:cso/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';

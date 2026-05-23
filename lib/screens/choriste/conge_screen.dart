@@ -1,7 +1,11 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/choriste_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+import '../../widgets/cso_ui.dart';
 
 class CongeScreen extends StatefulWidget {
   const CongeScreen({super.key});
@@ -17,18 +21,93 @@ class _CongeScreenState extends State<CongeScreen> {
   DateTime? _startDate;
   DateTime? _endDate;
   bool _isLoading = false;
+  bool _loadingConcerts = true;
+  List<dynamic> _concerts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConcerts();
+  }
+
+  Future<void> _loadConcerts() async {
+    try {
+      final concerts = await _service.getConcerts();
+      if (!mounted) return;
+      setState(() {
+        _concerts = concerts;
+        _loadingConcerts = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingConcerts = false);
+    }
+  }
+
+  DateTime? _parseDate(dynamic raw) {
+    if (raw == null) return null;
+    try {
+      return DateTime.parse(raw.toString()).toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool _isConcertDay(DateTime day) {
+    final key = _dayKey(day);
+    return _concerts.any((c) {
+      final d = _parseDate(c['dateHeure']);
+      return d != null && _dayKey(d) == key;
+    });
+  }
+
+  String? _concertTitleOnDay(DateTime day) {
+    for (final c in _concerts) {
+      final d = _parseDate(c['dateHeure']);
+      if (d != null && _isSameDay(d, day)) {
+        return c['title'] as String? ?? 'Concert';
+      }
+    }
+    return null;
+  }
+
+  DateTime? _firstConcertDayInRange(DateTime start, DateTime end) {
+    var d = DateTime(start.year, start.month, start.day);
+    final last = DateTime(end.year, end.month, end.day);
+    while (!d.isAfter(last)) {
+      if (_isConcertDay(d)) return d;
+      d = d.add(const Duration(days: 1));
+    }
+    return null;
+  }
 
   Future<void> _pickDate(bool isStart) async {
+    final today = DateTime.now();
+    final todayOnly = DateTime(today.year, today.month, today.day);
+
     final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now().add(const Duration(days: 1)),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: isStart
+          ? (_startDate ?? todayOnly.add(const Duration(days: 1)))
+          : (_endDate ??
+              _startDate?.add(const Duration(days: 1)) ??
+              todayOnly.add(const Duration(days: 2))),
+      firstDate: isStart ? todayOnly : (_startDate ?? todayOnly),
+      lastDate: todayOnly.add(const Duration(days: 365)),
+      selectableDayPredicate: (day) => !_isConcertDay(day),
+      helpText: isStart ? 'Date de début' : 'Date de fin',
+      cancelText: 'Annuler',
+      confirmText: 'OK',
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF2DD4BF),
+              primary: AppColors.accent,
               onPrimary: Colors.white,
               surface: Colors.white,
             ),
@@ -39,10 +118,19 @@ class _CongeScreenState extends State<CongeScreen> {
     );
 
     if (picked != null) {
+      if (_isConcertDay(picked)) {
+        final title = _concertTitleOnDay(picked);
+        _showSnackBar(
+          'Cette date correspond à un concert${title != null ? ' : $title' : ''}',
+          Colors.orange,
+        );
+        return;
+      }
       setState(() {
         if (isStart) {
           _startDate = picked;
-          if (_endDate != null && _endDate!.isBefore(_startDate!)) {
+          if (_endDate != null &&
+              (_endDate!.isBefore(_startDate!) || _isConcertDay(_endDate!))) {
             _endDate = null;
           }
         } else {
@@ -80,6 +168,17 @@ class _CongeScreenState extends State<CongeScreen> {
       return;
     }
 
+    final blockedDay = _firstConcertDayInRange(_startDate!, _endDate!);
+    if (blockedDay != null) {
+      final title = _concertTitleOnDay(blockedDay);
+      _showSnackBar(
+        'La période inclut un jour de concert${title != null ? ' ($title)' : ''}. '
+        'Choisissez d\'autres dates.',
+        Colors.orange,
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       await _service.declareLeave(
@@ -95,6 +194,15 @@ class _CongeScreenState extends State<CongeScreen> {
         _endDate = null;
         _reasonController.clear();
       });
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final serverMsg = e.response?.data?['message'] as String?;
+      _showSnackBar(
+        serverMsg ?? 'Erreur lors de l\'envoi de la demande',
+        serverMsg != null && serverMsg.toLowerCase().contains('concert')
+            ? Colors.orange
+            : const Color(0xFFEF4444),
+      );
     } catch (e) {
       if (!mounted) return;
       _showSnackBar('Erreur : $e', const Color(0xFFEF4444));
@@ -117,87 +225,43 @@ class _CongeScreenState extends State<CongeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+    return CsoUi.screenBody(
+      child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Banner ──
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2DD4BF), Color(0xFF3B82F6)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF2DD4BF).withValues(alpha: 0.3),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Stack(
+            decoration: CsoUi.card(accent: AppColors.accent),
+            child: Row(
               children: [
-                // Cercle décoratif
-                Positioned(
-                  right: -10,
-                  top: -10,
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white.withValues(alpha: 0.08),
-                    ),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.event_available_outlined,
+                    color: AppColors.accent,
+                    size: 26,
                   ),
                 ),
-                Positioned(
-                  right: 30,
-                  bottom: -20,
-                  child: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white.withValues(alpha: 0.06),
-                    ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Déclarer un congé', style: AppTextStyles.title),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Votre demande sera envoyée au manager pour validation',
+                        style: AppTextStyles.body,
+                      ),
+                    ],
                   ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                   Container(
-  padding: const EdgeInsets.all(10),
-  decoration: BoxDecoration(
-    color: Colors.white.withValues(alpha: 0.2),
-    borderRadius: BorderRadius.circular(12),
-  ),
-  child: const Icon(Icons.event_available_rounded,
-      color: Colors.white, size: 24),
-),
-                    const SizedBox(height: 14),
-                    const Text(
-                      'Déclarer un congé',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Votre demande sera envoyée au manager pour validation',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
                 ),
               ],
             ),
@@ -208,6 +272,39 @@ class _CongeScreenState extends State<CongeScreen> {
           // ── Section titre ──
           _buildSectionTitle('Période de congé', Icons.date_range_rounded),
           const SizedBox(height: 12),
+
+          if (!_loadingConcerts && _concerts.isNotEmpty)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.concertAccent.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppColors.concertAccent.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.event_busy_outlined,
+                    size: 18,
+                    color: AppColors.concertAccent.withValues(alpha: 0.9),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Les jours de concert ne peuvent pas être sélectionnés.',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.concertAccent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // ── Date cards ──
           Row(
@@ -271,7 +368,7 @@ class _CongeScreenState extends State<CongeScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2DD4BF),
+                      color: AppColors.accent,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -339,10 +436,10 @@ class _CongeScreenState extends State<CongeScreen> {
             child: ElevatedButton(
               onPressed: _isLoading ? null : _submitLeave,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2DD4BF),
+                backgroundColor: AppColors.accent,
                 foregroundColor: Colors.white,
                 disabledBackgroundColor:
-                    const Color(0xFF2DD4BF).withValues(alpha: 0.5),
+                    AppColors.accent.withValues(alpha: 0.5),
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -377,6 +474,7 @@ class _CongeScreenState extends State<CongeScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -387,7 +485,7 @@ class _CongeScreenState extends State<CongeScreen> {
           width: 4,
           height: 20,
           decoration: BoxDecoration(
-            color: const Color(0xFF2DD4BF),
+            color: AppColors.accent,
             borderRadius: BorderRadius.circular(2),
           ),
         ),

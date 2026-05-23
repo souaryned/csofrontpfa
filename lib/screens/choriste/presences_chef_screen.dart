@@ -1,12 +1,22 @@
 // screens/chef_pupitre/presences_chef_screen.dart
 import 'package:flutter/material.dart';
 import '../../services/chef_pupitre_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
+import '../../widgets/cso_ui.dart';
 
-/// Page autonome : présences de la répétition en cours
+/// Présences de la répétition en cours (chef de pupitre).
 class PresencesChefScreen extends StatefulWidget {
   final String pupitre;
   final Color color;
-  const PresencesChefScreen({super.key, required this.pupitre, required this.color});
+  final bool embedded;
+
+  const PresencesChefScreen({
+    super.key,
+    required this.pupitre,
+    required this.color,
+    this.embedded = false,
+  });
 
   @override
   State<PresencesChefScreen> createState() => _PresencesChefScreenState();
@@ -74,7 +84,8 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('${choriste['firstName']} → $newStatus'),
-          backgroundColor: newStatus == 'present' ? Colors.green : Colors.orange,
+          backgroundColor:
+              newStatus == 'present' ? AppColors.success : AppColors.warning,
           behavior: SnackBarBehavior.floating,
         ));
       }
@@ -82,7 +93,7 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Erreur : $e'),
-          backgroundColor: Colors.red,
+          backgroundColor: AppColors.error,
           behavior: SnackBarBehavior.floating,
         ));
       }
@@ -94,26 +105,20 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Raison de l'absence",
-            style: TextStyle(color: Color(0xFF1E293B), fontSize: 15, fontWeight: FontWeight.w700)),
+        title: const Text("Raison de l'absence", style: AppTextStyles.title),
         content: TextField(
           controller: controller,
-          style: const TextStyle(color: Color(0xFF1E293B)),
-          decoration: InputDecoration(
+          style: AppTextStyles.subtitle,
+          decoration: const InputDecoration(
             hintText: 'Ex : Congé médical…',
-            hintStyle: const TextStyle(color: Color(0xFFCBD5E1)),
-            enabledBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: const Color(0xFFE2E8F0))),
-            focusedBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: widget.color, width: 2)),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Annuler', style: TextStyle(color: Color(0xFF94A3B8))),
+            child: Text('Annuler', style: AppTextStyles.body),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -135,7 +140,7 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => _MessageBottomSheet(
@@ -152,22 +157,21 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Valider la liste ?',
-            style: TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w700)),
+        title: const Text('Valider la liste ?', style: AppTextStyles.title),
         content: const Text(
           'La liste sera envoyée au chef de chœur avec les présences et absences de votre pupitre.',
-          style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+          style: AppTextStyles.body,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Annuler', style: TextStyle(color: Color(0xFF94A3B8))),
+            child: Text('Annuler', style: AppTextStyles.body),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF16A34A),
+              backgroundColor: AppColors.success,
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -186,8 +190,8 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
       setState(() { _validated = true; _validating = false; });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('✅ Liste validée et envoyée au chef de chœur'),
-          backgroundColor: Color(0xFF16A34A),
+          content: Text('Liste validée et envoyée au chef de chœur'),
+          backgroundColor: AppColors.success,
           behavior: SnackBarBehavior.floating,
         ));
       }
@@ -196,37 +200,54 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
     }
   }
 
+  PreferredSizeWidget? get _standaloneAppBar => widget.embedded
+      ? null
+      : AppBar(
+          title: Row(
+            children: [
+              const Text('Présences répétition'),
+              if (widget.pupitre.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: widget.color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    AppColors.pupitreLabel(widget.pupitre),
+                    style: AppTextStyles.label.copyWith(color: widget.color),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh_outlined),
+              onPressed: _load,
+              tooltip: 'Actualiser',
+            ),
+          ],
+        );
+
   @override
   Widget build(BuildContext context) {
+    final body = _loading
+        ? CsoUi.loading()
+        : _error != null
+            ? _buildError()
+            : _buildContent();
+
+    if (widget.embedded) {
+      return CsoUi.screenBody(child: body);
+    }
+
     return Scaffold(
-      // ── FOND CLAIR ──
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        backgroundColor: widget.color,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Présences répétition',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            Text(_pupitreLabel(widget.pupitre),
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400)),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _load,
-            tooltip: 'Actualiser',
-          ),
-        ],
-      ),
-      body: _loading
-          ? Center(child: CircularProgressIndicator(color: widget.color))
-          : _error != null
-              ? _buildError()
-              : _buildContent(),
+      backgroundColor: AppColors.background,
+      appBar: _standaloneAppBar,
+      body: body,
     );
   }
 
@@ -237,60 +258,79 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
 
     return Column(
       children: [
-        // ── Carte répétition ──
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          color: Colors.white,
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(
-                  color: widget.color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: CsoUi.card(accent: widget.color),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.repAccent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(
+                    Icons.library_music_outlined,
+                    color: AppColors.repAccent,
+                    size: 22,
+                  ),
                 ),
-                child: Icon(Icons.music_note_rounded, color: widget.color, size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(rep['title'] ?? 'Répétition',
-                        style: const TextStyle(
-                          color: Color(0xFF1E293B),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        )),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${rep['location'] ?? ''} · ${_fmtTime(rep['startTime'])} – ${_fmtTime(rep['endTime'])}',
-                      style: TextStyle(color: widget.color, fontSize: 12),
-                    ),
-                  ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        rep['title'] ?? 'Répétition',
+                        style: AppTextStyles.subtitle,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${rep['location'] ?? ''} · ${_fmtTime(rep['startTime'])} – ${_fmtTime(rep['endTime'])}',
+                        style: AppTextStyles.caption,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-        Container(height: 1, color: const Color(0xFFE2E8F0)),
-
-        // ── Résumé chiffres ──
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          color: Colors.white,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _StatChip(label: 'Total',    value: '${summary['total']}',   color: const Color(0xFF64748B)),
-              _StatChip(label: 'Présents', value: '${summary['present']}', color: const Color(0xFF16A34A)),
-              _StatChip(label: 'Absents',  value: '${summary['absent']}',  color: const Color(0xFFF97316)),
-              _StatChip(label: 'Inconnus', value: '${summary['unknown']}', color: const Color(0xFF94A3B8)),
-            ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+            decoration: CsoUi.card(),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _StatChip(
+                  label: 'Total',
+                  value: '${summary['total']}',
+                  color: AppColors.textSecondary,
+                ),
+                _StatChip(
+                  label: 'Présents',
+                  value: '${summary['present']}',
+                  color: AppColors.success,
+                ),
+                _StatChip(
+                  label: 'Absents',
+                  value: '${summary['absent']}',
+                  color: AppColors.warning,
+                ),
+                _StatChip(
+                  label: 'Inconnus',
+                  value: '${summary['unknown']}',
+                  color: AppColors.textMuted,
+                ),
+              ],
+            ),
           ),
         ),
-        Container(height: 1, color: const Color(0xFFE2E8F0)),
 
         // ── Liste choristes ──
         Expanded(
@@ -298,7 +338,7 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
             onRefresh: _load,
             color: widget.color,
             child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 100),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
               itemCount: choristes.length,
               itemBuilder: (ctx, i) {
                 final c = choristes[i] as Map;
@@ -315,25 +355,22 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
 
         // ── Bouton valider ──
         Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: const Color(0xFFE2E8F0))),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, -3),
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.border)),
           ),
           child: SizedBox(
-            width: double.infinity, height: 50,
+            width: double.infinity,
+            height: 50,
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: _validated ? const Color(0xFF16A34A) : widget.color,
+                backgroundColor:
+                    _validated ? AppColors.success : AppColors.accent,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 elevation: 0,
               ),
               onPressed: _validated || _validating ? null : _validate,
@@ -353,39 +390,10 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
   }
 
   Widget _buildError() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.info_outline_rounded, color: const Color(0xFF94A3B8), size: 40),
-            ),
-            const SizedBox(height: 20),
-            Text(_error!,
-                style: const TextStyle(color: Color(0xFF475569), fontSize: 14),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: _load,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Réessayer'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: widget.color,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 0,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return CsoUi.emptyState(
+      message: _error!,
+      icon: Icons.info_outline_rounded,
+      iconColor: AppColors.textMuted,
     );
   }
 
@@ -397,15 +405,6 @@ class _PresencesChefScreenState extends State<PresencesChefScreen> {
     } catch (_) { return raw.toString(); }
   }
 
-  String _pupitreLabel(String p) {
-    switch (p) {
-      case 'soprano': return 'Soprano';
-      case 'alto':    return 'Alto';
-      case 'ténor':   return 'Ténor';
-      case 'basse':   return 'Basse';
-      default:        return p;
-    }
-  }
 }
 
 // ── Stat chip ─────────────────────────────────────────────────────────────────
@@ -419,7 +418,7 @@ class _StatChip extends StatelessWidget {
     children: [
       Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w800)),
       const SizedBox(height: 2),
-      Text(label, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
+      Text(label, style: AppTextStyles.caption),
     ],
   );
 }
@@ -442,10 +441,10 @@ class _ChoristePresenceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = choriste['presenceStatus'] as String;
     final statusColor = status == 'present'
-        ? const Color(0xFF16A34A)
+        ? AppColors.success
         : status == 'absent'
-            ? const Color(0xFFF97316)
-            : const Color(0xFF94A3B8);
+            ? AppColors.warning
+            : AppColors.textMuted;
     final statusIcon  = status == 'present'
         ? Icons.check_circle_rounded
         : status == 'absent'
@@ -454,16 +453,9 @@ class _ChoristePresenceTile extends StatelessWidget {
     final statusLabel = status == 'present' ? 'Présent' : status == 'absent' ? 'Absent' : '?';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 5, offset: const Offset(0, 1)),
-        ],
-      ),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: CsoUi.card(accent: color),
       child: Row(
         children: [
           // Avatar initiales
@@ -487,16 +479,14 @@ class _ChoristePresenceTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${choriste['firstName']} ${choriste['lastName']}',
-                    style: const TextStyle(
-                      color: Color(0xFF1E293B),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    )),
+                Text(
+                  '${choriste['firstName']} ${choriste['lastName']}',
+                  style: AppTextStyles.subtitle,
+                ),
                 if (status == 'absent' && choriste['absenceReason'] != null)
                   Text(
                     choriste['absenceReason'],
-                    style: const TextStyle(color: Color(0xFFF97316), fontSize: 11),
+                    style: AppTextStyles.caption.copyWith(color: AppColors.warning),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -509,10 +499,15 @@ class _ChoristePresenceTile extends StatelessWidget {
             child: Container(
               width: 34, height: 34,
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: AppColors.background,
                 borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: AppColors.border),
               ),
-              child: Icon(Icons.chat_bubble_outline_rounded, color: const Color(0xFF64748B), size: 16),
+              child: const Icon(
+                Icons.chat_bubble_outline_rounded,
+                color: AppColors.accent,
+                size: 16,
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -586,7 +581,7 @@ class _MessageBottomSheetState extends State<_MessageBottomSheet> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Message envoyé à ${widget.choriste['firstName']}'),
-          backgroundColor: Colors.green,
+          backgroundColor: AppColors.success,
           behavior: SnackBarBehavior.floating,
         ));
       }
@@ -610,7 +605,7 @@ class _MessageBottomSheetState extends State<_MessageBottomSheet> {
               width: 36, height: 4,
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                color: const Color(0xFFE2E8F0),
+                color: AppColors.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -631,7 +626,7 @@ class _MessageBottomSheetState extends State<_MessageBottomSheet> {
             const SizedBox(width: 12),
             Text(
               'Message à ${widget.choriste['firstName']} ${widget.choriste['lastName']}',
-              style: const TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w700, fontSize: 14),
+              style: AppTextStyles.subtitle,
             ),
           ]),
           const SizedBox(height: 14),
@@ -643,36 +638,21 @@ class _MessageBottomSheetState extends State<_MessageBottomSheet> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: AppColors.border),
                 ),
-                child: Text(msg, style: const TextStyle(color: Color(0xFF475569), fontSize: 12)),
+                child: Text(msg, style: AppTextStyles.body),
               ),
             )).toList(),
           ),
           const SizedBox(height: 14),
           TextField(
             controller: _controller,
-            style: const TextStyle(color: Color(0xFF1E293B)),
+            style: AppTextStyles.subtitle,
             maxLines: 3,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               hintText: 'Votre message…',
-              hintStyle: const TextStyle(color: Color(0xFFCBD5E1)),
-              filled: true,
-              fillColor: const Color(0xFFF8FAFC),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: widget.color, width: 1.5),
-              ),
             ),
           ),
           const SizedBox(height: 14),
